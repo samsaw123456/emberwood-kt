@@ -35,7 +35,7 @@ jobs:
           printf 'JAVA_HOME=%s\n' "$java_home" >> "$GITHUB_ENV"
       - name: Lint launchers and verification tools
         run: |
-          python3 -m pip install 'ruff==0.17.5' 'shellcheck-py==0.11.0.1'
+          python3 -m pip install 'ruff==0.17.5' 'shellcheck-py==0.11.0.1' 'Pillow==12.1.1'
           ruff check tools
           ruff format --check tools
           shellcheck -x emberwood-kotlin tools/*.sh
