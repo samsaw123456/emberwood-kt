@@ -89,8 +89,10 @@ inspected: the native title and paused equipment menu are legible, the menu bar
 identifies Emberwood Kotlin, the Dock uses the existing fox-and-forest icon, and
 physical Command+Q removes the window and running indicator. Local evidence is
 `build/ci-fourth-macos-arm/build/bundle-launch-macos/visual-review.md`.
-Intel Mac installation/GUI verification
-failed in that run and is being diagnosed; neither Mac build is fully verified
+Intel Mac installation/GUI verification failed because an unexpected microphone
+permission dialog blocked the game window. The game only requests audio output;
+the Java default mixer's eager input-device query is being investigated with an
+output-only diagnostic. No microphone access was granted. Neither Mac build is fully verified
 while its performance and control audits remain failed.
 
 The next Mac run also compiles a test-only ScreenCaptureKit helper and checks the
@@ -124,7 +126,7 @@ the title and paused screen were inspected. A repeat under an isolated Openbox
 window manager pressed physical Alt+F4 and verified that the installed process
 exited. The original **Emberwood** desktop entry
 and repository remain unchanged. Local evidence is in `build/installed-audit/`,
-`build/installed-user-audit/`, `build/installed-physical-close-0901ee81.log`, and
-`build/package-install-0901ee81.log`. This installed candidate matches the checked
+`build/installed-user-audit/`, `build/installed-physical-close-82e43cb9-repeat.log`, and
+`build/package-install-82e43cb9.log`. This installed candidate matches the checked
 game JAR SHA-256
-`0901ee811ad66953b5919e24aaebf9044fe973600d9b415046cfdf3176bd3cc4`.
+`82e43cb9b6ff80cf03bc581bdb58a9675de78d9fef8a5b49ddf8a27501efff37`.

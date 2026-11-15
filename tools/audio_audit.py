@@ -1,6 +1,7 @@
 """Capture only this game's output ports and verify real M-key mute/recovery.
 
 Run inside an isolated X11 display, with an existing PipeWire user audio service.
+State audits require a window manager; tools/run_x11_audit.sh starts an isolated one.
 Pass the actual app command after --. Never captures microphone/system-mix audio.
 """
 
@@ -167,15 +168,17 @@ def audit_states(
         app.stdin.flush()
         return read_fixture(app, log).split("\t")
 
-    def command(text):
+    def command(text, require_output=True):
         fields = request(text)
         assert len(fields) == 6 and fields[0] == "OK", fields
         assert fields[2] == fields[3], "Audio and persisted-setting mute state disagree"
-        assert fields[5] == "available", fields[5]
+        if require_output:
+            assert fields[5] == "available", fields[5]
         return {
             "state": fields[1],
             "muted": fields[2] == "true",
             "focused": fields[4] == "true",
+            "availability": fields[5],
         }
 
     def sound_target():
@@ -199,9 +202,11 @@ def audit_states(
             )
         raise AssertionError("Physical Tab navigation did not reach Sound")
 
-    def mute_to(wanted, binding="m", point=None):
+    def mute_to(wanted, binding="m"):
         started = time.monotonic()
         if binding == "Mouse":
+            # Recording windows take seconds; resolve the live window position at activation.
+            point = sound_target()[1]
             click(*point)
         else:
             key(binding, True)
@@ -216,6 +221,17 @@ def audit_states(
         finally:
             if binding != "Mouse":
                 key(binding, False)
+
+    deadline = time.monotonic() + 10
+    while True:
+        initial = command("status", require_output=False)
+        if initial["availability"] == "available":
+            break
+        assert initial["availability"] == "initializing", initial
+        assert time.monotonic() < deadline, (
+            "Audio output did not finish initialization within ten seconds"
+        )
+        time.sleep(0.025)
 
     # Warm real key delivery and restore sound before measuring any state.
     mute_to(True)
@@ -236,11 +252,8 @@ def audit_states(
         status = command("status")
         assert status["state"] == state and status["focused"], status
         assert not status["muted"], status
-        point = None
-        if binding == "Mouse":
-            point = sound_target()[1]
-        elif binding != "m":
-            point = focus_sound()
+        if binding not in ("m", "Mouse"):
+            focus_sound()
         row = {
             "method": method,
             "binding": binding,
@@ -256,18 +269,18 @@ def audit_states(
             source, output, label + "-long", lambda: command("cue win")
         )
 
-        def cut(result=row, activation=binding, location=point):
+        def cut(result=row, activation=binding):
             command("cue win")
             time.sleep(0.35)
-            result["delivery_ms"]["mute"] = mute_to(True, activation, location)
+            result["delivery_ms"]["mute"] = mute_to(True, activation)
 
         row["cut"] = record_audio(source, output, label + "-cut", cut)
         row["muted"] = record_audio(
             source, output, label + "-muted", lambda: command("cue")
         )
 
-        def restore(result=row, activation=binding, location=point):
-            result["delivery_ms"]["restore"] = mute_to(False, activation, location)
+        def restore(result=row, activation=binding):
+            result["delivery_ms"]["restore"] = mute_to(False, activation)
 
         # Production unmute emits its own gem cue; no fixture cue is used here.
         row["unmute"] = record_audio(source, output, label + "-unmute", restore)
@@ -334,10 +347,28 @@ def main():
         held = set()
         try:
             root = dpy.screen().root
+            if args.state_fixture:
+                assert (
+                    root.get_full_property(
+                        dpy.intern_atom("_NET_SUPPORTING_WM_CHECK"), X.AnyPropertyType
+                    )
+                    is not None
+                ), "State audit requires a window manager; use tools/run_x11_audit.sh"
             win = None
             source = []
             for _ in range(120):
-                for w in root.query_tree().children:
+                clients = root.get_full_property(
+                    dpy.intern_atom("_NET_CLIENT_LIST"), X.AnyPropertyType
+                )
+                windows = (
+                    [
+                        dpy.create_resource_object("window", int(w))
+                        for w in clients.value
+                    ]
+                    if clients is not None
+                    else root.query_tree().children
+                )
+                for w in windows:
                     try:
                         if w.get_wm_name() == "Emberwood Kotlin":
                             win = w

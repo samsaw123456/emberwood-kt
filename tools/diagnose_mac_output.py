@@ -165,6 +165,7 @@ def main():
                 sys.executable,
                 ROOT / "tools/mac_bundle_smoke.py",
                 app,
+                "--startup-only",
                 "--output",
                 output / "bundle-launch",
             ],

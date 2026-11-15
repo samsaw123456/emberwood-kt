@@ -23,6 +23,17 @@ object CampaignAudit {
         Files.createDirectories(output)
         val preferences = Files.createTempDirectory("emberwood-campaign-")
         val robot = Robot()
+        val physical = PhysicalKeys(output.resolve("physical-keys.jsonl"))
+        val keyNames =
+            mapOf(
+                KeyEvent.VK_A to "a",
+                KeyEvent.VK_D to "d",
+                KeyEvent.VK_SPACE to "space",
+                KeyEvent.VK_SHIFT to "left-shift",
+                KeyEvent.VK_ENTER to "return",
+                KeyEvent.VK_R to "r",
+            )
+        val pendingKeys = mutableListOf<Pair<String, Boolean>>()
         var frame: JFrame? = null
         var panel: GamePanel? = null
         val held = mutableSetOf<Int>()
@@ -41,8 +52,15 @@ object CampaignAudit {
             if (!changed) return null
             val received = CountDownLatch(1)
             delivery[code to down] = received
-            if (down) robot.keyPress(code) else robot.keyRelease(code)
+            pendingKeys.add(checkNotNull(keyNames[code]) to down)
             return received
+        }
+
+        fun transmit() {
+            if (pendingKeys.isEmpty()) return
+            val batch = pendingKeys.toTypedArray()
+            pendingKeys.clear()
+            physical.send(*batch)
         }
 
         fun key(
@@ -50,10 +68,15 @@ object CampaignAudit {
             down: Boolean,
         ) {
             val received = postKey(code, down) ?: return
+            transmit()
             check(received.await(2, TimeUnit.SECONDS)) { "Physical key $code/$down did not reach the focused window" }
         }
 
-        fun release() = held.toList().forEach { key(it, false) }
+        fun release() {
+            val pending = held.toList().mapNotNull { postKey(it, false) }
+            transmit()
+            pending.forEach { check(it.await(2, TimeUnit.SECONDS)) { "Physical release did not reach the window" } }
+        }
 
         fun snap(label: String) {
             var bounds = Rectangle()
@@ -103,6 +126,7 @@ object CampaignAudit {
                                 KeyEvent.VK_SPACE to input.jumpHeld,
                                 KeyEvent.VK_SHIFT to input.dashHeld,
                             ).mapNotNull { (code, down) -> postKey(code, down) }
+                        transmit()
                         pending.forEach { check(it.await(2, TimeUnit.SECONDS)) { "Physical chord did not reach the focused window" } }
                         var age = 0.0
                         edt { age = game.level.age }
@@ -154,8 +178,9 @@ object CampaignAudit {
                         .withIndex()
                         .drop(resumeAt)) {
                         routeIndex = index
-                        // Stop outside the opossum's whole patrol before jumping.
-                        val approach = if (chapter == 0 && index == 4) route.copy(x = 1225.0) else route
+                        // Land inside the ledge (x >= 1230), while staying outside
+                        // the opossum's leftmost hitbox edge at x = 1255.
+                        val approach = if (chapter == 0 && index == 4) route.copy(x = 1235.0) else route
                         if (!driver.follow(approach)) {
                             reachedRouteEnd = false
                             break
@@ -217,12 +242,16 @@ object CampaignAudit {
                 }
             }
         } finally {
-            release()
-            if (panel != null) snap("final")
-            edt { frame?.dispose() }
-            Files.writeString(output.resolve("input-route.tsv"), trace.joinToString("\n") + "\n")
-            Files.writeString(output.resolve("results.txt"), results.joinToString("\n") + "\n")
-            preferences.toFile().deleteRecursively()
+            try {
+                release()
+                if (panel != null) snap("final")
+            } finally {
+                edt { frame?.dispose() }
+                Files.writeString(output.resolve("input-route.tsv"), trace.joinToString("\n") + "\n")
+                Files.writeString(output.resolve("results.txt"), results.joinToString("\n") + "\n")
+                preferences.toFile().deleteRecursively()
+                physical.close()
+            }
         }
     }
 }

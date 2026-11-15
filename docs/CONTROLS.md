@@ -8,9 +8,10 @@ campaign does not mark physical controls passed.
 The native audit injects OS input and captures before/during/after window frames.
 Its automatic assertions are followed by inspection of every referenced frame.
 Source results live in `build/audit/controls.tsv`; bundled-runtime results live
-in `build/audit-packaged/controls.tsv`. The final Linux x64 packaged run completed
-279 cases with zero automatic failures. Visual and audio review status belongs
-to the coverage TSV and [verification record](VERIFICATION.md).
+in `build/audit-packaged/controls.tsv`. The complete inventory contains 279 cases.
+Automatic assertions, visual inspection and audio-output verification are
+recorded separately in the coverage TSV and [verification record](VERIFICATION.md).
+A failed or unfinished final-build rerun does not inherit a previous build's pass.
 
 | Physical binding | State / expected effect |
 | --- | --- |
@@ -47,8 +48,13 @@ ordinary-camera cases also check visible fox movement and scrolling landmarks.
 The test window uses a non-interactive 6×6 color marker to confirm that the desktop
 has presented the requested frame before capture. Saved PNGs retain the actual
 window size and letterboxing. The marker belongs only to the audit. Input and
-presentation latency tables are retained with the frames; native modifier-key
-delivery timing includes the helper process's startup overhead.
+presentation latency tables are retained with the frames. Keyboard input uses
+one persistent native connection; cold server startup is recorded separately
+from each delivered command. Linux batches use an independent X11 connection
+and verify the OS key state before acknowledging the request. Both platforms
+still require the game's key-listener receipt and the visible gameplay result.
+This avoids coupling injected keys to Robot's shared AWT rendering lock without
+changing the game's input handlers or simulation timing.
 
 On macOS, the injector records actual per-side Shift flags in
 `physical-os-state.jsonl`; AWT reports modifier transitions only when the

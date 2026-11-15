@@ -123,7 +123,10 @@ requested a median 15.988 ms but lasted a median 59.791 ms (79.802 ms at the 95t
 percentile). The event thread spent 241.835 seconds waiting for its event queue
 during the 278-second recording, versus 0.265 seconds waiting for Metal flushes.
 All four periodic thread dumps place it in `EventQueue.getNextEvent`. Even the
-audit's requested 20 ms measurement sleeps lasted a median 69.137 ms.
+audit's requested 20 ms measurement sleeps lasted a median 69.137 ms. The JFR's
+resident-set event reports a process high-water mark of 343,015,424 bytes
+(327.1 MiB), distinct from the 128 MiB heap cap and roughly 12.2 MiB retained
+heap after the soak.
 
 A separate 30-second Metal-disabled diagnostic did not solve this: its timer
 parks still lasted a median 55.703 ms for 15.988 ms requested, and mean paint costs
@@ -192,3 +195,73 @@ Linux CI had no audio device; actual audio output is tested separately on the
 local PipeWire desktop. The native CI artifacts are under
 `build/ci-third-linux-x64/build/performance/` and
 `build/ci-third-linux-arm/build/performance/`.
+
+## Intel macOS microphone prompt and audio initialization
+
+The fourth Intel run is additionally invalid as unobstructed foreground testing:
+its installed-app desktop screenshot shows an unexpected microphone permission
+prompt. Permission was not granted. The game only requests a `SourceDataLine`
+for playback; it does not request recording. The JFR thread dumps show the audio
+thread blocked inside `DirectAudioDevice.nOpen` at 61, 123, 184 and 247 seconds,
+then later blocked in start/close. The event-dispatch thread was blocked in
+provider close at 309–433 seconds and native close at 495–558 seconds. This can
+also interfere with focus and cleanup.
+
+The previous summary text “opened; original cues enabled” used a null error as
+its condition and therefore did **not** prove initialization completed. The audit
+now distinguishes initialization from an opened, running playback line using
+`Audio.ready`; actual audible output is established by the separate process-only
+PCM audit. The audio-state fixture waits for that readiness with a bounded
+timeout rather than treating the absence of an error as success.
+
+OpenJDK's direct mixer eagerly probes both playback and capture format support.
+For its synthetic default mixer, capture-format probing queries the default
+input device even when the caller only requested playback. A related
+[CoreAudio output-only microphone prompt was fixed in RustAudio](https://github.com/RustAudio/cpal/pull/1070/files)
+by avoiding that default-input query. This is a supported diagnosis to test,
+not yet proof that a proposed output-device selection resolves Emberwood's
+prompt. The current default output must be preserved; microphone permission
+and silent disabling of sound are not acceptable substitutes for a verified fix.
+
+Evidence: `build/ci-fourth-macos-intel/build/bundle-launch-macos/desktop-with-dock.png`,
+`build/ci-fourth-macos-intel/build/performance/pacing.jfr` and
+`build/mac-intel-thread-dumps.txt`.
+
+The shutdown fix publishes the playback line only after initialization completes
+and performs potentially blocking native close on a daemon thread. Two hardware
+fixtures block initialization and active-device close independently; both prove
+that Quit returns within the bounded test deadline and the device is released
+when the provider resumes. These regressions passed in the centralized 28-test
+run. They do not substitute for the pending native Mac microphone-prompt fix or
+its actual startup, PCM and application-close verification.
+
+## Fifth Mac ARM foreground observations
+
+The next default run still failed all active FPS windows: its 180-second soak
+rendered 18.348 frames/s at 4.879 ms average paint and 19.872% process CPU. All
+44 before/after AWT focus checks passed. All 258 native samples after launch
+reported an active, visible, frontmost regular application, with Darwin
+background policy zero and nice priority -10. The physical core checks passed.
+
+Its 5,054 TimerQueue waits requested a median 15.990 ms and lasted 58.926 ms
+(p95 79.869 ms). The 3,672 requested 20 ms harness sleeps lasted a median
+69.688 ms. The event-dispatch thread spent 239.019 seconds parked. Simple focus
+loss or an explicitly backgrounded process does not explain these observations;
+they still do not establish a particular OS timer-policy cause.
+
+All 28 native screenshots were inspected; no permission prompt obscures this
+ARM run. The attempted application-policy comparison did not launch because the
+hardcoded `/usr/bin/taskpolicy` path was absent, so there is no policy result to
+compare. The next comparison uses an isolated LaunchServices application copy
+with the unchanged production JAR, assets and bundled runtime.
+
+That bundled runtime intentionally omits management and JFR modules. The audit
+therefore uses `ProcessHandle.info().totalCpuDuration()` for process CPU (and
+fails explicitly if unavailable), plus `Runtime.totalMemory() - freeMemory()`
+for used heap. Limits, scenes and input remain unchanged. Full-JDK runs can
+still retain JFR externally; the exact bundled-runtime probe does not expand the
+shipped module set solely to enable instrumentation.
+
+Evidence: `build/ci-fifth-macos-arm-diagnostics/performance/`,
+`build/mac-arm-fifth-pacing-analysis.json` and
+`build/mac-arm-fifth-visuals/REVIEW.md`.

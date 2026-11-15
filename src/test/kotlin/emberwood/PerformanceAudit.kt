@@ -1,11 +1,9 @@
 package emberwood
 
-import com.sun.management.OperatingSystemMXBean
 import java.awt.Robot
 import java.awt.Toolkit
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
-import java.lang.management.ManagementFactory
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Locale
@@ -44,8 +42,8 @@ object PerformanceAudit {
         private val soakSeconds: Double,
     ) {
         private val robot = Robot().apply { autoDelay = 3 }
-        private val operatingSystem = ManagementFactory.getOperatingSystemMXBean() as OperatingSystemMXBean
-        private val memory = ManagementFactory.getMemoryMXBean()
+        private val process = ProcessHandle.current()
+        private val runtime = Runtime.getRuntime()
         private val keys = mutableSetOf<Int>()
         private val rows = mutableListOf<String>()
         private val failures = mutableListOf<String>()
@@ -126,7 +124,17 @@ object PerformanceAudit {
                         appendLine("Processors visible to JVM: ${Runtime.getRuntime().availableProcessors()}")
                         appendLine("Maximum Java heap bytes: $maximumHeap")
                         appendLine("Window content pixels: ${edt { "${panel.width} x ${panel.height}" }}")
-                        appendLine("Audio device: ${panel.audio.unavailable ?: "opened; original cues enabled"}")
+                        appendLine(
+                            "Audio device: " +
+                                (
+                                    panel.audio.unavailable
+                                        ?: if (panel.audio.ready) {
+                                            "opened and running; actual PCM audited separately"
+                                        } else {
+                                            "initialization not complete; audible output unverified"
+                                        }
+                                ),
+                        )
                         appendLine("Live heap before/after soak bytes: $liveBefore / $liveAfter")
                         appendLine("Soak seconds: $soakSeconds")
                         appendLine("Scene fixtures load original terrain and position the fox; boss fixtures grant acorns and armor.")
@@ -372,12 +380,17 @@ object PerformanceAudit {
             edt {
                 Snapshot(
                     System.nanoTime(),
-                    operatingSystem.processCpuTime,
+                    process
+                        .info()
+                        .totalCpuDuration()
+                        .orElseThrow {
+                            IllegalStateException("Operating system did not provide this process's CPU time")
+                        }.toNanos(),
                     panel.paintedFrames,
                     panel.paintNanos,
                     panel.game.elapsed,
                     panel.game.state,
-                    memory.heapMemoryUsage.used,
+                    usedHeap(),
                     panel.game.shots.size,
                     panel.game.particles.size,
                 )
@@ -386,8 +399,10 @@ object PerformanceAudit {
         private fun liveHeap(): Long {
             System.gc()
             robot.delay(400)
-            return memory.heapMemoryUsage.used
+            return usedHeap()
         }
+
+        private fun usedHeap(): Long = runtime.totalMemory() - runtime.freeMemory()
 
         private fun screenshot(name: String) {
             edt { panel.paintImmediately(0, 0, panel.width, panel.height) }

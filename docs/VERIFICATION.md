@@ -46,7 +46,7 @@ desktop mix. Java audio flags alone do not satisfy this check.
 - Bootstrap: **passed**. Empty-cache Java download, checksum, extraction and
   offline reuse were exercised without changing system Java.
 - Kotlin formatting: **passed**. The final source is formatted with ktlint.
-- Build, lint and automated tests: **passed**, 26 tests. The simulation campaign
+- Build, lint and automated tests: **passed**, 28 tests. The simulation campaign
   reaches all 20 levels, all 60 acorns and 20 hidden fireflies, all six guardians
   and all 13 equipment unlocks with zero retries. Optional gems collected by this
   route: 196 of 378. This is simulation evidence, not a physical-input playthrough.
@@ -63,7 +63,14 @@ desktop mix. Java audio flags alone do not satisfy this check.
   task picker loads Play Emberwood Kotlin; selecting it launches the game. Return,
   movement, jump, pause and window close were exercised in that launched window.
   Screenshots are retained in `build/zed-audit/`.
-- Final native controls, physical campaign, performance and macOS installed
+- Native campaign: **all twenty levels passed** on the candidate below using
+  normal-rate physical OS keys from the title through victory. It collected all
+  60 acorns, all 20 fireflies, 199/378 optional gems, and defeated
+  all six guardians. One actual fall in Sunlit Ridge exercised checkpoint recovery;
+  final time was 08:21 with one retry. All twenty completion frames and guardian
+  before/defeated pairs were inspected. Evidence: `build/campaign-native-twenty/`.
+  The earlier separate first-three-level run also passed, including a spike retry.
+- Final native controls, performance and macOS installed
   execution: **pending final runs**. See PERFORMANCE.md for measurements and
   rejected experiments; no failed measurement is being labeled passed.
 
@@ -89,11 +96,16 @@ desktop mix. Java audio flags alone do not satisfy this check.
 - Paused and result menus drew gameplay instructions underneath their own footer.
   The gameplay footer is now hidden in menus; results retain an explicit M/sound
   hint. The rebuilt candidate is undergoing a fresh visual control audit.
+- A blocked audio provider could hang window disposal. Initializing devices are
+  no longer published to UI controls, and native close runs outside the interface
+  thread. Two regression tests exercise blocked initialization and blocked native
+  shutdown, including eventual device release. Output readiness now requires an
+  opened, running line; absence of an error alone is not evidence of readiness.
 
 The current local candidate JAR is
-`82e43cb9b6ff80cf03bc581bdb58a9675de78d9fef8a5b49ddf8a27501efff37`.
+`ce6f5af4fba0455e977936eead904e24608083fc8b256d4d07b406aaddbd3bf8`.
 Separate `ktlintFormat`, then `check fatJar`, completed successfully with all
-26 tests. Original-resource verification and the six installer fixtures passed
+28 tests. Original-resource verification and the six installer fixtures passed
 again. Native playthrough attempts use ordinary input and real campfire retries;
 every retry is retained in their results, and no state fixture or teleport counts
 as campaign progress.

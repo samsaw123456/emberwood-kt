@@ -27,6 +27,7 @@ private class NativeAudit(
 ) {
     private lateinit var frame: JFrame
     private lateinit var panel: GamePanel
+    private lateinit var keyboard: PhysicalKeys
     private val robot = Robot().apply { autoDelay = 8 }
     private val rows = mutableListOf<String>()
     private val evidence = mutableListOf<String>()
@@ -47,7 +48,6 @@ private class NativeAudit(
     private val selectedCases = System.getProperty("audit.filter")?.let(::Regex)
     private val macOS = System.getProperty("os.name").startsWith("Mac")
     private val observedDesktopState = GamePanel::class.java.getDeclaredField("previousState").apply { isAccessible = true }
-    private val downKeys = mutableSetOf<Int>()
     private val nativeKeys = mutableSetOf<String>()
     private var sequence = 0
     private var failures = 0
@@ -60,6 +60,8 @@ private class NativeAudit(
         Files.createDirectories(output)
         val preferences = Files.createTempDirectory("emberwood-audit-")
         try {
+            keyboard = PhysicalKeys(output.resolve("physical-os-state.jsonl"))
+            inputTimings.add("startup\tserver\tOS\tready\t${keyboard.startupNanos / 1e6}")
             edt {
                 val pair = openWindow(Settings(preferences))
                 frame = pair.first
@@ -115,6 +117,14 @@ private class NativeAudit(
             } catch (failure: Throwable) {
                 failures++
                 failure.printStackTrace()
+            }
+            if (::keyboard.isInitialized) {
+                try {
+                    keyboard.close()
+                } catch (failure: Throwable) {
+                    failures++
+                    failure.printStackTrace()
+                }
             }
             if (::frame.isInitialized) edt { frame.dispose() }
             flushImages()
@@ -318,25 +328,9 @@ private class NativeAudit(
         inputTimings.add("$currentCase\t${binding.first}\t${binding.second}\t${if (binding.third) "down" else "up"}\t$milliseconds")
     }
 
-    private fun location(key: Int) = if (key == KeyEvent.VK_SHIFT) KeyEvent.KEY_LOCATION_LEFT else KeyEvent.KEY_LOCATION_STANDARD
+    private fun down(key: Int) = physical(PhysicalKeys.name(key) to true)
 
-    private fun down(key: Int) {
-        val binding = Triple(key, location(key), true)
-        val expected = (deliveries[binding]?.count ?: 0) + 1
-        val started = System.nanoTime()
-        robot.keyPress(key)
-        downKeys.add(key)
-        if (edt { frame.isFocused }) received(binding, expected, started)
-    }
-
-    private fun up(key: Int) {
-        val binding = Triple(key, location(key), false)
-        val expected = (deliveries[binding]?.count ?: 0) + 1
-        val started = System.nanoTime()
-        robot.keyRelease(key)
-        downKeys.remove(key)
-        if (edt { frame.isFocused }) received(binding, expected, started)
-    }
+    private fun up(key: Int) = physical(PhysicalKeys.name(key) to false)
 
     private fun tap(key: Int) {
         down(key)
@@ -346,14 +340,10 @@ private class NativeAudit(
     }
 
     private fun physical(vararg events: Pair<String, Boolean>) {
-        val command = mutableListOf("python3", "tools/physical_key.py")
         val expected = mutableMapOf<Triple<Int, Int, Boolean>, Int>()
         val shifted = nativeKeys.filter { it.endsWith("shift") }.toMutableSet()
-        if (KeyEvent.VK_SHIFT in downKeys) shifted.add("left-shift")
         val aggregateOnly = mutableListOf<Pair<String, Boolean>>()
         for ((key, down) in events) {
-            command.add(key)
-            command.add(if (down) "down" else "up")
             if (macOS && key.endsWith("shift")) {
                 val wasShifted = shifted.isNotEmpty()
                 if (down) shifted.add(key) else shifted.remove(key)
@@ -364,24 +354,7 @@ private class NativeAudit(
                     continue
                 }
             }
-            val (code, where) =
-                when (key) {
-                    "left-shift" -> KeyEvent.VK_SHIFT to KeyEvent.KEY_LOCATION_LEFT
-                    "right-shift" -> KeyEvent.VK_SHIFT to KeyEvent.KEY_LOCATION_RIGHT
-                    "keypad-enter" -> KeyEvent.VK_ENTER to KeyEvent.KEY_LOCATION_NUMPAD
-                    else -> {
-                        val code =
-                            when (key) {
-                                "space" -> KeyEvent.VK_SPACE
-                                "left" -> KeyEvent.VK_LEFT
-                                "right" -> KeyEvent.VK_RIGHT
-                                "up" -> KeyEvent.VK_UP
-                                "tab" -> KeyEvent.VK_TAB
-                                else -> KeyEvent.getExtendedKeyCodeForChar(key.single().uppercaseChar().code)
-                            }
-                        code to KeyEvent.KEY_LOCATION_STANDARD
-                    }
-                }
+            val (code, where) = PhysicalKeys.binding(key)
             val binding = Triple(code, where, down)
             expected[binding] = (expected[binding] ?: deliveries[binding]?.count ?: 0) + 1
         }
@@ -390,9 +363,7 @@ private class NativeAudit(
         // downs before running the helper so case recovery releases them instead of contaminating
         // later cases with an OS modifier that the test forgot to release.
         for ((key, down) in events) if (down) nativeKeys.add(key)
-        val process = ProcessBuilder(command).inheritIO()
-        if (macOS) process.environment()["EMBERWOOD_PHYSICAL_TRACE"] = output.resolve("physical-os-state.jsonl").toAbsolutePath().toString()
-        check(process.start().waitFor() == 0) { "Native physical key injection failed" }
+        keyboard.send(*events)
         for ((key, down) in aggregateOnly) {
             inputTimings.add("$currentCase\t$key\tOS\t$down (AWT aggregate unchanged)\t${(System.nanoTime() - started) / 1e6}")
         }
@@ -401,7 +372,6 @@ private class NativeAudit(
     }
 
     private fun releaseAll() {
-        downKeys.toList().forEach(::up)
         if (nativeKeys.isNotEmpty()) physical(*nativeKeys.map { it to false }.toTypedArray())
     }
 
@@ -859,9 +829,10 @@ private class NativeAudit(
             }
             case("$key + Space + Shift", GameState.PLAYING, "Movement, jump and air dash remain responsive; release stops movement") {
                 edt { panel.game.player.reset(Vec(if (sign > 0) 140.0 else 430.0, 536.0)) }
+                await("Relocated movement fixture is grounded") { edt { panel.game.player.grounded } }
                 physical(key to true, "space" to true)
                 robot.delay(100)
-                snap("moving-jump")
+                snap("moving-jump") { check(panel.game.player.jumpsLeft == 1 && panel.game.player.y < 510) }
                 physical("space" to false, "left-shift" to true)
                 robot.delay(130)
                 snap("moving-air-dash") { check(panel.game.player.y < 510 && panel.game.player.facing == sign) }
@@ -1245,6 +1216,7 @@ private class NativeAudit(
                     true,
                 ) {
                     if (state == GameState.PAUSED && rotation < 0) repeat(3) { click("armor-down") }
+                    snap("wheel-ready")
                     val ids = edt { panel.actions.map { it.id } }
                     val point =
                         edt {

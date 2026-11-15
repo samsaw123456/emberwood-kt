@@ -56,7 +56,7 @@ jobs:
         run: tools/run_mac_profile.sh build/performance
       - name: Diagnose macOS scheduling with application resource policy
         if: ${{ !cancelled() && runner.os == 'macOS' && steps.mac_performance.outcome == 'failure' }}
-        run: /usr/bin/taskpolicy -a tools/run_mac_profile.sh build/performance-application-policy -Dperformance.soakSeconds=30
+        run: tools/run_mac_profile.sh build/performance-application-policy --application-policy -Dperformance.soakSeconds=30
       - name: Capture only the game's Mac audio and audit physical mute
         if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
         run: python3 tools/mac_audio_audit.py

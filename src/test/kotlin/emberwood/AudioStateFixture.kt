@@ -54,15 +54,15 @@ object AudioStateFixture {
                     }
                     response =
                         if (line == "sound-target") {
-                            soundTarget(panel)
+                            soundTarget(panel, frame)
                         } else {
                             listOf(
                                 "OK",
                                 panel.game.state,
                                 panel.audio.muted,
                                 panel.settings.muted,
-                                panel.isFocusOwner,
-                                panel.audio.unavailable ?: "available",
+                                panel.isFocusOwner && frame.isShowing && frame.isActive && frame.isFocused,
+                                panel.audio.unavailable ?: if (panel.audio.ready) "available" else "initializing",
                             ).joinToString("\t")
                         }
                 }
@@ -73,7 +73,13 @@ object AudioStateFixture {
         }
     }
 
-    private fun soundTarget(panel: GamePanel): String {
+    private fun soundTarget(
+        panel: GamePanel,
+        frame: JFrame,
+    ): String {
+        check(frame.isShowing && frame.isActive && frame.isFocused && panel.isFocusOwner) {
+            "Sound target requires a visible, active, focused game window"
+        }
         panel.rebuildActions()
         val sound = panel.actions.single { it.id == "sound" }
         val origin = panel.locationOnScreen

@@ -10,12 +10,18 @@ import tempfile
 import time
 from pathlib import Path
 
+from mac_game_focus import NativeFocusUnavailable, require_game_window
 from mac_profile_observer import NativeStatus
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path)
+    parser.add_argument(
+        "--startup-only",
+        action="store_true",
+        help="Capture startup without sending any keyboard or mouse input",
+    )
     parser.add_argument(
         "--output", type=Path, default=Path("build/bundle-launch-macos")
     )
@@ -68,6 +74,7 @@ def main():
     core.CGEventSourceFlagsState.restype = ctypes.c_uint64
     native = NativeStatus()
     receipts = []
+    held = set()
     keys = {
         name: foundation.CFStringCreateWithCString(None, name.encode(), 0x08000100)
         for name in ("kCGWindowOwnerPID", "kCGWindowLayer", "kCGWindowNumber")
@@ -97,12 +104,16 @@ def main():
         return None
 
     def key(code, down, flags=0):
+        if down:
+            held.add(code)
         event = core.CGEventCreateKeyboardEvent(None, code, down)
         if not event:
             raise RuntimeError("macOS did not create the physical key event")
         try:
             core.CGEventSetFlags(event, flags)
             core.CGEventPost(0, event)
+            if not down:
+                held.discard(code)
         finally:
             foundation.CFRelease(event)
 
@@ -126,6 +137,16 @@ def main():
             raise RuntimeError(
                 f"Installed game is not the receiving foreground app at {phase}; inspect desktop and native-state evidence"
             )
+        if not args.startup_only:
+            try:
+                state["accessibility_window"] = require_game_window(pid)
+            except NativeFocusUnavailable as error:
+                state["input_guard_error"] = str(error)
+                raise
+            finally:
+                (args.output / "native-state.json").write_text(
+                    json.dumps(receipts, indent=2) + "\n"
+                )
 
     process = None
     pid = None
@@ -176,6 +197,23 @@ def main():
                 check=True,
             )
             require_foreground(pid, "before-game-input")
+            if args.startup_only:
+                (args.output / "result.json").write_text(
+                    json.dumps(
+                        {
+                            "launcher": "LaunchServices open -W -n copied diagnostic .app",
+                            "launcher_executable": str(executable),
+                            "actions": [],
+                            "result": "Startup captured; visual review must confirm no permission dialog. No keyboard or mouse input was sent.",
+                        },
+                        indent=2,
+                    )
+                    + "\n"
+                )
+                print(
+                    "Startup captured without input; inspect desktop-with-dock.png for any permission dialog."
+                )
+                return
             tap(36)  # Return: start from the actual title screen.
             tap(2, 0.35)  # D: move right.
             tap(49)  # Space: jump.
@@ -233,7 +271,7 @@ def main():
             )
             print("PASS: installed .app window launched; native Command+Q closed it.")
     finally:
-        for code in (12, 55, 36, 2, 49, 53):
+        for code in list(held):
             key(code, False)
         if pid and window_for(pid) is not None:
             subprocess.run(["kill", "-TERM", str(pid)], check=False)

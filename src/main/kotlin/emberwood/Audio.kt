@@ -10,7 +10,9 @@ import kotlin.math.pow
 import kotlin.math.sin
 
 /** Original Emberwood tones, mixed into one bounded, quiet desktop output stream. */
-class Audio : AutoCloseable {
+class Audio(
+    private val createLine: (AudioFormat) -> SourceDataLine = { AudioSystem.getSourceDataLine(it) },
+) : AutoCloseable {
     private data class Voice(
         val pcm: ShortArray,
         var offset: Int = 0,
@@ -45,7 +47,13 @@ class Audio : AutoCloseable {
 
     @Volatile var unavailable: String? = null
         private set
-    private var line: SourceDataLine? = null
+
+    @Volatile private var line: SourceDataLine? = null
+    val ready: Boolean
+        get() {
+            val device = line
+            return running.get() && device != null && device.isOpen && device.isRunning
+        }
     private val thread =
         Thread({ output() }, "emberwood-audio").apply {
             isDaemon = true
@@ -68,12 +76,17 @@ class Audio : AutoCloseable {
     }
 
     private fun output() {
+        var device: SourceDataLine? = null
         try {
             val format = AudioFormat(22050f, 16, 1, true, false)
-            val device = AudioSystem.getSourceDataLine(format)
-            line = device
+            device = createLine(format)
             device.open(format, 4096)
+            if (!running.get()) return
             device.start()
+            // A provider can block during initialization. Never publish its line
+            // while close/flush could wait on that same native initialization lock.
+            line = device
+            if (!running.get()) return
             val bytes = ByteArray(512)
             while (running.get()) {
                 synchronized(voices) {
@@ -95,13 +108,22 @@ class Audio : AutoCloseable {
                 System.err.println("Audio unavailable: $unavailable")
             }
         } finally {
-            line?.close()
+            line = null
+            device?.close()
         }
     }
 
     override fun close() {
-        running.set(false)
-        line?.close()
+        if (!running.getAndSet(false)) return
+        val device = line
+        if (device != null) {
+            // Native device shutdown can itself block. Window disposal must not
+            // wait on a provider lock; closing also wakes a blocked audio write.
+            Thread({ device.close() }, "emberwood-audio-close").apply {
+                isDaemon = true
+                start()
+            }
+        }
         thread.join(1000)
     }
 

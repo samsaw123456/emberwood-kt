@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from audio_audit import audit_states, read_pcm
+from mac_game_focus import NativeFocusUnavailable, require_game_window
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -111,6 +112,8 @@ def main():
     keys = {"m": 46, "Return": 36, "space": 49, "KP_Enter": 76, "Tab": 48}
 
     def key(name, down):
+        if down:
+            require_game_window(app.pid)
         event = core.CGEventCreateKeyboardEvent(None, keys[name], down)
         if not event:
             raise RuntimeError("macOS did not create the physical key event")
@@ -124,6 +127,7 @@ def main():
             foundation.CFRelease(event)
 
     def click(x, y):
+        require_game_window(app.pid)
         for kind in (
             5,
             1,
@@ -208,7 +212,7 @@ def main():
             )
             summary["result"] = "PASS"
             summary.pop("reason", None)
-        except CaptureUnavailable as error:
+        except (CaptureUnavailable, NativeFocusUnavailable) as error:
             summary.update(result="UNVERIFIED", reason=str(error))
             raise
         except Exception as error:
