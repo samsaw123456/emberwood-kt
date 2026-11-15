@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mac_entitlement_trial import identity, sign_without_input
+from mac_entitlement_trial import identity, requested_entitlements, sign_without_input
 
 
 class EntitlementTests(unittest.TestCase):
@@ -47,7 +47,10 @@ class EntitlementTests(unittest.TestCase):
                         else {"com.apple.security.device.audio-input": value}
                     )
                     return subprocess.CompletedProcess(
-                        command, 0, stdout=plistlib.dumps(actual)
+                        command,
+                        0,
+                        stdout=plistlib.dumps(actual),
+                        stderr=b"CodeDirectory flags=0x2(adhoc)\n",
                     )
 
                 with patch("mac_entitlement_trial.subprocess.run", side_effect=run):
@@ -56,6 +59,79 @@ class EntitlementTests(unittest.TestCase):
                     else:
                         with self.assertRaises(RuntimeError):
                             sign_without_input(root, entitlements, root, expected)
+
+    def test_hardened_requires_observed_flag_exact_exceptions_and_unchanged_bytes(self):
+        minimal = requested_entitlements("hardened")
+        for actual, flags, tamper in [
+            (minimal, "10002", False),
+            (minimal, "2", False),
+            (minimal, None, False),
+            (
+                {**minimal, "com.apple.security.device.audio-input": False},
+                "10002",
+                False,
+            ),
+            (
+                {
+                    **minimal,
+                    "com.apple.security.cs.allow-unsigned-executable-memory": True,
+                },
+                "10002",
+                False,
+            ),
+            ({"com.apple.security.cs.allow-jit": True}, "10002", False),
+            (minimal, "10002", True),
+        ]:
+            with (
+                self.subTest(actual=actual, flags=flags, tamper=tamper),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                app = Path(directory)
+                (app / "Contents/runtime").mkdir(parents=True)
+                (app / "Contents/runtime/java").write_bytes(b"original runtime")
+                (app / "Contents/app").mkdir(parents=True)
+                jar = app / "Contents/app/emberwood-kotlin.jar"
+                jar.write_bytes(b"original game")
+                expected = identity(app)
+                entitlements = app / "request.plist"
+                entitlements.write_bytes(plistlib.dumps(minimal))
+                commands = []
+
+                def run(
+                    command,
+                    *,
+                    actual=actual,
+                    flags=flags,
+                    tamper=tamper,
+                    jar=jar,
+                    commands=commands,
+                    **_kwargs,
+                ):
+                    commands.append(command)
+                    if tamper:
+                        jar.write_bytes(b"different game")
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        stdout=plistlib.dumps(actual),
+                        stderr=(
+                            f"CodeDirectory flags=0x{flags}(runtime)\n"
+                            if flags
+                            else "missing flags\n"
+                        ).encode(),
+                    )
+
+                with patch("mac_entitlement_trial.subprocess.run", side_effect=run):
+                    if actual == minimal and flags == "10002" and not tamper:
+                        sign_without_input(app, entitlements, app, expected, "hardened")
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            sign_without_input(
+                                app, entitlements, app, expected, "hardened"
+                            )
+                self.assertIn("--options", commands[0])
+                self.assertIn("runtime", commands[0])
+                self.assertNotIn("--deep", commands[0])
 
 
 if __name__ == "__main__":

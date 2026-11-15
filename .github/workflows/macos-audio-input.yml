@@ -1,6 +1,13 @@
-name: Diagnose explicit native audio input denial
+name: Diagnose native output-only app signing
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Disposable app signing policy; production package stays unchanged
+        type: choice
+        required: true
+        default: hardened
+        options: [hardened, false-only]
 permissions:
   contents: read
 jobs:
@@ -28,13 +35,17 @@ jobs:
           python3 -m unittest discover -s tools -p 'test_mac_audio_identity.py' -v
           ./gradlew --no-daemon check fatJar
           python3 tools/package_app.py --skip-build
-      - name: Observe only the disposable input-denied app
-        run: python3 tools/mac_entitlement_trial.py
+      - name: Observe only the disposable output-only app
+        env:
+          SIGNING_MODE: ${{ inputs.mode }}
+        run: |
+          case "$SIGNING_MODE" in hardened|false-only) ;; *) exit 2 ;; esac
+          python3 tools/mac_entitlement_trial.py --mode "$SIGNING_MODE"
       - name: Retain actual signature, startup and native-app PCM evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: emberwood-input-denial-${{ matrix.os }}
+          name: emberwood-audio-signing-${{ inputs.mode }}-${{ matrix.os }}
           path: |
             build/mac-entitlement-trial/
             build/reports/tests/

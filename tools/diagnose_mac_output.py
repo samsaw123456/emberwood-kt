@@ -160,6 +160,40 @@ def record_signing(app, source_java, output):
         "app-launcher": app / "Contents/MacOS" / metadata["CFBundleExecutable"],
         "app-bundle": app,
     }
+    # Include every native helper/library, not only the app and Java launchers.
+    magic = {
+        b"\xcf\xfa\xed\xfe",
+        b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf",
+        b"\xfe\xed\xfa\xce",
+        b"\xca\xfe\xba\xbe",
+        b"\xca\xfe\xba\xbf",
+    }
+    for path in sorted(app.rglob("*")):
+        if path.is_file() and path not in targets.values():
+            with path.open("rb") as binary:
+                native = binary.read(4) in magic
+            if native:
+                targets[f"nested-{len(targets):03d}"] = path
+    # The command-line Java executable embeds its own bundle metadata. Keep
+    # only plist dictionaries identifying that executable, never process env.
+    data = source_java.read_bytes()
+    start, index = 0, 0
+    while (start := data.find(b"<?xml", start)) >= 0:
+        end = data.find(b"</plist>", start)
+        if end < 0:
+            break
+        candidate = data[start : end + len(b"</plist>")]
+        try:
+            embedded = plistlib.loads(candidate)
+        except (ValueError, plistlib.InvalidFileException):
+            embedded = None
+        if isinstance(embedded, dict) and "CFBundleIdentifier" in embedded:
+            (output / f"source-java-embedded-{index:02d}.plist").write_bytes(
+                plistlib.dumps(embedded)
+            )
+            index += 1
+        start = end + len(b"</plist>")
     receipts = {}
     for label, target in targets.items():
         with (output / f"signing-{label}.log").open("w") as log:

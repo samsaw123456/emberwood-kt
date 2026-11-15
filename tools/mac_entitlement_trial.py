@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,19 @@ from package_integrity import tree_digest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def requested_entitlements(mode):
+    if mode == "false-only":
+        return {"com.apple.security.device.audio-input": False}
+    if mode == "hardened":
+        # Pinned HotSpot executable mappings use MAP_JIT; FFM upcalls use CodeCache.
+        # See docs/MAC_SIGNING_TRIAL.md. No input, debugger, dyld or unsigned-memory grant.
+        return {
+            "com.apple.security.cs.allow-jit": True,
+            "com.apple.security.cs.disable-library-validation": True,
+        }
+    raise ValueError(f"Unknown diagnostic signing mode: {mode}")
+
+
 def identity(app):
     return {
         "runtime": tree_digest(app / "Contents/runtime"),
@@ -30,29 +44,56 @@ def identity(app):
     }
 
 
-def sign_without_input(app, entitlements, output, expected):
+def sign_without_input(app, entitlements, output, expected, mode="false-only"):
     subprocess.run(
-        ["codesign", "--force", "--sign", "-", "--entitlements", entitlements, app],
+        [
+            "codesign",
+            "--force",
+            "--sign",
+            "-",
+            *(["--options", "runtime"] if mode == "hardened" else []),
+            "--entitlements",
+            entitlements,
+            app,
+        ],
         check=True,
         timeout=30,
     )
     subprocess.run(
         ["codesign", "--verify", "--deep", "--strict", app], check=True, timeout=30
     )
-    with (output / "entitlement-check.log").open("w") as log:
-        receipt = subprocess.run(
-            ["codesign", "--display", "--entitlements", ":-", app],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=log,
-            timeout=15,
-        )
+    receipt = subprocess.run(
+        ["codesign", "--display", "--verbose=4", "--entitlements", ":-", app],
+        check=True,
+        capture_output=True,
+        timeout=15,
+    )
+    description = receipt.stderr.decode()
+    (output / "entitlement-check.log").write_text(description)
     actual = plistlib.loads(receipt.stdout)
     (output / "actual-entitlements.plist").write_bytes(plistlib.dumps(actual))
-    if actual.get("com.apple.security.device.audio-input") is not False:
+    requested = requested_entitlements(mode)
+    if actual != requested or any(type(value) is not bool for value in actual.values()):
         raise RuntimeError(
-            "The diagnostic native app did not retain the explicit input denial"
+            "The diagnostic native app did not retain exactly the requested entitlements"
         )
+    flags = re.search(r"\bflags=0x([0-9a-fA-F]+)", description)
+    if not flags or bool(int(flags.group(1), 16) & 0x10000) != (mode == "hardened"):
+        raise RuntimeError(
+            "The observed native signature runtime flag does not match the trial"
+        )
+    (output / "signature-policy.json").write_text(
+        json.dumps(
+            {
+                "mode": mode,
+                "flags": "0x" + flags.group(1),
+                "hardened_runtime": mode == "hardened",
+                "entitlements": actual,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
     if identity(app) != expected:
         raise RuntimeError(
             "Diagnostic signing changed production runtime or game bytes"
@@ -83,6 +124,9 @@ def main():
     parser.add_argument(
         "--output", type=Path, default=ROOT / "build/mac-entitlement-trial"
     )
+    parser.add_argument(
+        "--mode", choices=("false-only", "hardened"), default="false-only"
+    )
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("Run this native app diagnostic on macOS")
@@ -102,7 +146,8 @@ def main():
     evidence = {
         "result": "INCOMPLETE",
         "diagnostic_only": True,
-        "audio_input_entitlement": False,
+        "signing_mode": args.mode,
+        "requested_entitlements": requested_entitlements(args.mode),
         "production": expected,
         "permission_changes": False,
     }
@@ -112,15 +157,15 @@ def main():
         app = Path(directory).resolve() / "Emberwood Kotlin.app"
         subprocess.run(["ditto", original, app], check=True, timeout=60)
         entitlements = output / "diagnostic-entitlements.plist"
-        entitlements.write_bytes(
-            plistlib.dumps({"com.apple.security.device.audio-input": False})
-        )
+        entitlements.write_bytes(plistlib.dumps(requested_entitlements(args.mode)))
         try:
             for label in ("original-signing", "startup", "native-pcm"):
                 (output / label).mkdir(exist_ok=True)
             source_java = Path(os.environ["JAVA_HOME"]) / "bin/java"
             record_signing(app, source_java, output / "original-signing")
-            sign_without_input(app, entitlements, output / "startup", expected)
+            sign_without_input(
+                app, entitlements, output / "startup", expected, args.mode
+            )
             record_signing(app, source_java, output / "startup")
             run_owned_check(
                 app,
@@ -145,7 +190,9 @@ def main():
                 None,
                 "audio",
             )
-            sign_without_input(app, entitlements, output / "native-pcm", expected)
+            sign_without_input(
+                app, entitlements, output / "native-pcm", expected, args.mode
+            )
             record_signing(app, source_java, output / "native-pcm")
             run_owned_check(
                 app,
