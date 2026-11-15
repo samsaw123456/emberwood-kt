@@ -62,6 +62,79 @@ def main_launch_command(app, data, output):
     return command
 
 
+class StreamBudget:
+    """Separate cold capture setup from the fixed, bounded movement observation."""
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.started = clock()
+        self.active_started = None
+        self.receipt = {
+            "setup_started": self.started,
+            "active_started": None,
+            "limits_seconds": {"setup": 3, "active": 7, "total": 10, "left_start": 2.5},
+        }
+
+    def check(self):
+        now = self.clock()
+        self.receipt["last_checked"] = now
+        if now - self.started > 10:
+            raise RuntimeError("Total stream observation exceeded ten seconds")
+        if self.active_started is None:
+            if now - self.started > 3:
+                raise RuntimeError(
+                    "Initial stream capture setup exceeded three seconds"
+                )
+        elif now - self.active_started > 7:
+            raise RuntimeError("Active stream observation exceeded seven seconds")
+        return now
+
+    def activate(self):
+        if self.active_started is not None:
+            raise RuntimeError("Stream observation cannot restart its budget")
+        self.active_started = self.check()
+        self.receipt.update(
+            active_started=self.active_started,
+            setup_seconds=self.active_started - self.started,
+        )
+
+    def before_input(self, key):
+        self.check()
+        if self.active_started is None or key not in ("a", "left"):
+            raise RuntimeError("Movement input requires a ready stream")
+        limit = 2.5 if key == "left" else 1.5
+        if self.clock() - self.active_started > limit:
+            raise RuntimeError(
+                "Insufficient active observation time for the next command"
+            )
+
+
+def failure_diagnostics(report, controller, output, pid, windows, executable):
+    # Stop capturing before slow screenshot/stack diagnostics, including setup
+    # failures before any movement. Preserve both the original and cleanup error.
+    if controller is not None:
+        report["failure_capture_drain_started"] = time.monotonic()
+        try:
+            controller.close()
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            report["capture_cleanup_error"] = str(error)
+        finally:
+            report["failure_capture_drain_finished"] = time.monotonic()
+    try:
+        subprocess.run(
+            ["screencapture", "-x", str(output / "failure-desktop.png")],
+            check=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        report["failure_capture_error"] = str(error)
+    try:
+        if pid is not None and windows.executable(pid) == executable:
+            capture_initialization_stacks(pid, output)
+    except (OSError, RuntimeError, KeyError) as error:
+        report["failure_stack_error"] = str(error)
+
+
 def game_crop(size, expected_size=None):
     size = tuple(size)
     if size not in GAME_CROPS or (
@@ -703,26 +776,30 @@ def main():
             if not 270 < before[0] < 350 or abs(before[1] - start[1]) > 6:
                 raise RuntimeError("D did not reach the original safe clearing")
 
-            trace_started = time.monotonic()
+            budget = StreamBudget()
+            report["stream_budget"] = budget.receipt
 
             def capture(label):
-                if time.monotonic() - trace_started > 10:
-                    raise RuntimeError("Bounded active stream exceeded ten seconds")
+                budget.check()
                 owned_window(windows, pid, executable, window["id"], window_size)
                 path = output / f"{label}.png"
                 controller.capture(pid, None, path)
-                if time.monotonic() - trace_started > 10:
-                    raise RuntimeError(
-                        "Capture exceeded the bounded ten-second stream segment"
-                    )
+                budget.check()
                 return path
 
             before = observed_fox(capture("a-before"), window_size)
+            budget.activate()  # Actual initial pixels, not process startup alone.
             for key in ("a", "left"):
-                if time.monotonic() - trace_started > (4.5 if key == "left" else 1.5):
-                    raise RuntimeError(
-                        "Insufficient bounded stream time for the next command"
-                    )
+                budget.before_input(key)
+
+                def arm_observation(key=key):
+                    # Recheck after the worker's own AX preflight, immediately
+                    # before GO. A late worker must not consume the recovery time.
+                    budget.before_input(key)
+                    if key == "left" and sampler is not None:
+                        sampler.start()
+                    budget.before_input(key)
+
                 receipt = run_hold(
                     output,
                     pid,
@@ -732,7 +809,7 @@ def main():
                     0.35,
                     key,
                     held_capture_callback(args.held_capture, capture, key),
-                    sampler.start if key == "left" and sampler is not None else None,
+                    arm_observation,
                     window_size=window_size,
                 )
                 released, rested = observe_recovery(
@@ -749,8 +826,12 @@ def main():
                     }
                 )
                 before = rested
-            controller.close()  # Drain the bounded stream before physical Quit.
-            controller = None
+            budget.check()
+            try:
+                controller.close()  # Drain the bounded stream before physical Quit.
+            finally:
+                controller = None
+            budget.check()
             report["trace"] = validate_capture_trace(output, pid)
             summary = json.loads((output / "capture-trace/summary.json").read_text())
             if (
@@ -793,18 +874,9 @@ def main():
     except Exception as error:
         report["error"] = str(error)
         try:
-            subprocess.run(
-                ["screencapture", "-x", str(output / "failure-desktop.png")],
-                check=True,
-                timeout=5,
-            )
-        except (OSError, subprocess.SubprocessError) as capture_error:
-            report["failure_capture_error"] = str(capture_error)
-        try:
-            if pid is not None and windows.executable(pid) == executable:
-                capture_initialization_stacks(pid, output)
-        except (OSError, RuntimeError, KeyError) as stack_error:
-            report["failure_stack_error"] = str(stack_error)
+            failure_diagnostics(report, controller, output, pid, windows, executable)
+        finally:
+            controller = None
         raise
     finally:
         try:

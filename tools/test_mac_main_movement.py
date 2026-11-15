@@ -14,8 +14,10 @@ from unittest.mock import Mock, patch
 from mac_game_window import NativeWindowMissing
 from mac_main_movement import (
     LiveSample,
+    StreamBudget,
     await_owned_window,
     await_title,
+    failure_diagnostics,
     game_crop,
     held_capture_callback,
     inspect_held_stream,
@@ -61,6 +63,126 @@ class Keyboard:
 
 
 class MainMovementTests(unittest.TestCase):
+    def test_capture_setup_and_active_limits_do_not_extend_total_stream_budget(self):
+        clock = Clock()
+        budget = StreamBudget(clock)
+        clock.now = 101.6  # Cold snapshot setup can exceed the old 1.5s budget.
+        budget.activate()
+        budget.before_input("a")
+        self.assertAlmostEqual(budget.receipt["setup_seconds"], 1.6)
+        clock.now = 104.1
+        budget.before_input("left")
+        clock.now += 0.001
+        with self.assertRaisesRegex(RuntimeError, "next command"):
+            budget.before_input("left")
+        clock.now = 108.6
+        budget.check()
+        clock.now += 0.001
+        with self.assertRaisesRegex(RuntimeError, "seven seconds"):
+            budget.check()
+        for setup, accepted in ((3.0, True), (3.001, False)):
+            clock = Clock()
+            budget = StreamBudget(clock)
+            clock.now += setup
+            if accepted:
+                budget.activate()
+                clock.now = 110.0
+                budget.check()
+                clock.now += 0.001
+                with self.assertRaisesRegex(RuntimeError, "ten seconds"):
+                    budget.check()
+            else:
+                with self.assertRaisesRegex(RuntimeError, "three seconds"):
+                    budget.activate()
+        clock = Clock()
+        budget = StreamBudget(clock)
+        with self.assertRaisesRegex(RuntimeError, "ready stream"):
+            budget.before_input("a")
+        budget.activate()
+        with self.assertRaisesRegex(RuntimeError, "restart"):
+            budget.activate()
+
+    def test_late_ready_worker_gets_no_go_after_the_active_left_deadline(self):
+        real_popen = subprocess.Popen
+        child = (
+            "import json,select,sys\nfrom pathlib import Path\n"
+            "spec=json.loads(sys.argv[1]);print('READY',flush=True)\n"
+            "arrived=bool(select.select([sys.stdin],[],[],0.2)[0])\n"
+            "Path(spec['output']).write_text(json.dumps({'go_received':arrived}))\n"
+        )
+        clock = Clock()
+        budget = StreamBudget(clock)
+        budget.activate()
+        budget.before_input("left")
+
+        def spawn(command, **kwargs):
+            clock.now += 2.501  # Slow worker startup/preflight, before READY.
+            return real_popen([sys.executable, "-c", child, command[-1]], **kwargs)
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("mac_main_movement.subprocess.Popen", side_effect=spawn),
+            patch("mac_main_movement.NativeKeys") as keys,
+        ):
+            output = Path(directory)
+            with self.assertRaisesRegex(RuntimeError, "next command"):
+                run_hold(
+                    output,
+                    42,
+                    Path("/owned"),
+                    7,
+                    "left",
+                    0.35,
+                    "left",
+                    before_go=lambda: budget.before_input("left"),
+                )
+            self.assertFalse(
+                json.loads((output / "input-left.json").read_text())["go_received"]
+            )
+            keys.assert_not_called()
+
+    def test_failed_capture_drains_before_slow_diagnostics_and_keeps_both_errors(self):
+        for fail_close in (False, True):
+            events = []
+
+            def close(events=events, fail_close=fail_close):
+                events.append("drain")
+                if fail_close:
+                    raise RuntimeError("capture cleanup failed")
+
+            def screenshot(*_args, events=events, **_kwargs):
+                events.append("screenshot")
+                raise OSError("desktop capture failed")
+
+            report = {"result": "FAIL", "error": "original setup deadline"}
+            with (
+                patch("mac_main_movement.subprocess.run", side_effect=screenshot),
+                patch(
+                    "mac_main_movement.capture_initialization_stacks",
+                    side_effect=lambda *_, events=events: events.append("stacks"),
+                ),
+            ):
+                failure_diagnostics(
+                    report,
+                    SimpleNamespace(close=close),
+                    Path("/owned output"),
+                    42,
+                    SimpleNamespace(executable=lambda _: Path("/owned")),
+                    Path("/owned"),
+                )
+            self.assertEqual(events, ["drain", "screenshot", "stacks"])
+            self.assertEqual(report["error"], "original setup deadline")
+            self.assertEqual(report["result"], "FAIL")
+            self.assertEqual(report["failure_capture_error"], "desktop capture failed")
+            self.assertEqual(
+                report.get("capture_cleanup_error"),
+                "capture cleanup failed" if fail_close else None,
+            )
+            self.assertLessEqual(
+                report["failure_capture_drain_started"],
+                report["failure_capture_drain_finished"],
+            )
+
     def test_measured_arm_images_keep_logical_motion_and_title_without_resampling(self):
         from linux_game_smoke import title_visible
         from PIL import Image
