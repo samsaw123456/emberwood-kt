@@ -38,10 +38,22 @@ FILTERED_CONTROLS = {
 
 
 def configure_app(
-    app, tests, output, seconds, input_socket, audit="performance", *, audio_trace=False
+    app,
+    tests,
+    output,
+    seconds,
+    input_socket,
+    audit="performance",
+    *,
+    audio_trace=False,
+    rendering_variant="default",
 ):
     if audio_trace and audit != "audio":
         raise ValueError("Audio tracing is only available for the audio audit")
+    if rendering_variant not in ("default", "no-double-buffer") or (
+        rendering_variant != "default" and audit != "controls-capture"
+    ):
+        raise ValueError("Rendering variants require the focused capture diagnostic")
     configs = list((app / "Contents/app").glob("*.cfg"))
     if len(configs) != 1:
         raise RuntimeError("Expected one native launcher configuration")
@@ -71,6 +83,8 @@ def configure_app(
         if audit == "controls-capture":
             options.append("-Daudit.paintTrace=true")
             options.append("-Xlog:gc,safepoint:stderr:time,uptime,level,tags")
+            if rendering_variant == "no-double-buffer":
+                options.append("-Daudit.disableDoubleBuffering=true")
     elif audit == "audio":
         main_class = "emberwood.AudioStateFixture"
         options.append("-Xlog:gc,safepoint:stderr:time,uptime,level,tags")
@@ -609,6 +623,49 @@ def validate_capture_trace(output, pid):
     }
 
 
+def validate_graphics_metadata(output, rendering_variant):
+    path = output / "graphics-metadata.json"
+    metadata = json.loads(path.read_text())
+    if (
+        not isinstance(metadata, dict)
+        or any(
+            not isinstance(metadata.get(name), str) or not metadata[name]
+            for name in (
+                "configuration_class",
+                "device_class",
+                "repaint_manager_class",
+            )
+        )
+        or type(metadata.get("manager_double_buffering_enabled")) is not bool
+        or type(metadata.get("manager_double_buffering_before_window")) is not bool
+        or metadata.get("requested_double_buffering_disabled")
+        is not (rendering_variant == "no-double-buffer")
+        or (
+            rendering_variant == "no-double-buffer"
+            and (
+                metadata["manager_double_buffering_enabled"] is not False
+                or metadata["manager_double_buffering_before_window"] is not False
+            )
+        )
+    ):
+        raise RuntimeError(
+            "Actual graphics/buffering metadata does not confirm the requested diagnostic"
+        )
+    return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), **metadata}
+
+
+def cleanup_capture_windows(controller, executable, baseline, output):
+    from mac_bundle_smoke import cleanup_app
+
+    destination = output / "window-cleanup"
+    destination.mkdir(exist_ok=True)
+    cleanup_app(controller.pid, executable, controller.windows, baseline, destination)
+    record = json.loads((destination / "cleanup.json").read_text())
+    if record.get("result") != "PASS" or record.get("new_windows_remaining") != []:
+        raise RuntimeError("Capture diagnostic did not close its native windows")
+    return record
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -633,11 +690,19 @@ def main():
         action="store_true",
         help="Record a test-only own-window stream alongside --audit controls-capture",
     )
+    parser.add_argument(
+        "--rendering-variant",
+        choices=("default", "no-double-buffer"),
+        default="default",
+        help="Test-only buffering comparison for --audit controls-capture",
+    )
     args = parser.parse_args()
     if args.audio_trace and args.audit != "audio":
         parser.error("--audio-trace requires --audit audio")
     if args.capture_trace and args.audit != "controls-capture":
         parser.error("--capture-trace requires --audit controls-capture")
+    if args.rendering_variant != "default" and args.audit != "controls-capture":
+        parser.error("--rendering-variant requires --audit controls-capture")
     if platform.system() != "Darwin":
         parser.error("Run this diagnostic on macOS")
     if not 30 <= args.soak_seconds <= 1800:
@@ -700,6 +765,8 @@ def main():
         )
     if args.capture_trace:
         evidence["capture_trace_directory"] = str(output / "capture-trace")
+    if args.audit == "controls-capture":
+        evidence["requested_rendering_variant"] = args.rendering_variant
     if args.audit == "audio":
         evidence["audio_trace_directory"] = (
             str(output / "trace") if args.audio_trace else None
@@ -720,6 +787,11 @@ def main():
             if args.audit != "audio"
             else None
         )
+        window_baseline = (
+            controller.windows.visible_registry()
+            if args.audit == "controls-capture"
+            else None
+        )
         configure_app(
             app,
             tests,
@@ -728,6 +800,7 @@ def main():
             controller.path if controller else None,
             args.audit,
             audio_trace=args.audio_trace,
+            rendering_variant=args.rendering_variant,
         )
         # Re-sign only the enclosing app: its already signed runtime stays identical.
         subprocess.run([ROOT / "tools/sign_mac_app.sh", app], check=True, timeout=90)
@@ -815,6 +888,25 @@ def main():
                     evidence["result"] = "FAIL"
                     evidence["external_controller_cleanup_error"] = str(error)
                     evidence.setdefault("error", str(error))
+                if args.audit == "controls-capture":
+                    try:
+                        evidence["native_window_cleanup"] = cleanup_capture_windows(
+                            controller, executable, window_baseline, output
+                        )
+                        evidence["graphics_metadata"] = validate_graphics_metadata(
+                            output, args.rendering_variant
+                        )
+                    except (
+                        OSError,
+                        RuntimeError,
+                        TypeError,
+                        ValueError,
+                        subprocess.SubprocessError,
+                    ) as error:
+                        cleanup_error = cleanup_error or error
+                        evidence["result"] = "FAIL"
+                        evidence["capture_postcondition_error"] = str(error)
+                        evidence.setdefault("error", str(error))
             if "original_app_tree_sha256_after" not in evidence:
                 evidence["original_app_tree_sha256_after"] = tree_digest(original)
             record.write_text(json.dumps(evidence, indent=2) + "\n")

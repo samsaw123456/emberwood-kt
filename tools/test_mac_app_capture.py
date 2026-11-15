@@ -8,9 +8,40 @@ import tempfile
 import unittest
 import zlib
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from mac_app_profile import CAPTURE_CONTROLS_FILTER, main, validate_capture_trace
+from mac_app_profile import (
+    CAPTURE_CONTROLS_FILTER,
+    main,
+    validate_capture_trace,
+    validate_graphics_metadata,
+)
+
+
+def graphics_fixture(output, disabled=False, *, enabled=None):
+    metadata = {
+        "configuration_class": "fixture.GraphicsConfiguration",
+        "device_class": "fixture.GraphicsDevice",
+        "device_id": "fixture display",
+        "configuration_bounds": [0, 0, 1920, 1080],
+        "default_transform": [1, 0, 0, 1, 0, 0],
+        "display_mode": [1920, 1080, 32, 60],
+        "panel_size": [1152, 648],
+        "frame_size": [1152, 676],
+        "panel_double_buffered": True,
+        "repaint_manager_class": "javax.swing.RepaintManager",
+        "manager_double_buffering_enabled": not disabled
+        if enabled is None
+        else enabled,
+        "manager_double_buffering_before_window": not disabled
+        if enabled is None
+        else enabled,
+        "requested_double_buffering_disabled": disabled,
+        "maximum_buffer_size": [1920, 1080],
+    }
+    (output / "graphics-metadata.json").write_text(json.dumps(metadata))
+    return metadata
 
 
 def trace_fixture(output, pid=12345):
@@ -80,6 +111,23 @@ def trace_fixture(output, pid=12345):
 
 
 class CaptureTraceTests(unittest.TestCase):
+    def test_graphics_receipt_confirms_observed_buffering_not_only_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            graphics_fixture(output, disabled=True, enabled=False)
+            validate_graphics_metadata(output, "no-double-buffer")
+            graphics_fixture(output, disabled=True, enabled=True)
+            with self.assertRaises(RuntimeError):
+                validate_graphics_metadata(output, "no-double-buffer")
+            graphics_fixture(output, disabled=False, enabled=False)
+            self.assertFalse(
+                validate_graphics_metadata(output, "default")[
+                    "manager_double_buffering_enabled"
+                ]
+            )
+            with self.assertRaises(RuntimeError):
+                validate_graphics_metadata(output, "no-double-buffer")
+
     def test_incomplete_unscoped_or_wrong_process_trace_never_passes(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
@@ -232,6 +280,7 @@ class CaptureTraceTests(unittest.TestCase):
                 def __init__(self, folder, executable, *, capture_trace=False):
                     self.path = folder / "input.sock"
                     self.trace = capture_trace
+                    self.windows = SimpleNamespace(visible_registry=lambda: set())
 
                 def __enter__(self):
                     return self
@@ -260,6 +309,7 @@ class CaptureTraceTests(unittest.TestCase):
                     f"java-options=-Daudit.filter={CAPTURE_CONTROLS_FILTER}\n",
                     (copy / "Contents/app/Emberwood Kotlin.cfg").read_text(),
                 )
+                graphics_fixture(output)
                 if primary_failure:
                     raise RuntimeError("primary snapshot failed")
                 return {
@@ -271,6 +321,12 @@ class CaptureTraceTests(unittest.TestCase):
                     "failed_cases": [],
                     "exception": None,
                 }
+
+            def cleanup(_controller, _executable, baseline, folder):
+                self.assertEqual(baseline, set())
+                self.assertEqual(folder, output)
+                self.assertEqual(closed, [True])
+                return {"pid": 12345, "result": "PASS", "new_windows_remaining": []}
 
             with (
                 patch("mac_app_profile.ROOT", root),
@@ -296,6 +352,7 @@ class CaptureTraceTests(unittest.TestCase):
                 patch("mac_app_profile.Controller", ControllerFixture),
                 patch("mac_app_profile.subprocess.run", side_effect=command),
                 patch("mac_app_profile.launch_profile", side_effect=audit),
+                patch("mac_app_profile.cleanup_capture_windows", side_effect=cleanup),
             ):
                 if primary_failure or incomplete_trace:
                     with self.assertRaisesRegex(

@@ -13,6 +13,7 @@ import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
 import javax.swing.JFrame
+import javax.swing.RepaintManager
 import javax.swing.SwingUtilities
 import kotlin.math.abs
 
@@ -39,6 +40,8 @@ private class NativeAudit(
     private val jumpObservations = mutableListOf<String>()
     private var presentationNonce = 65535
     private val paintTraceEnabled = java.lang.Boolean.getBoolean("audit.paintTrace")
+    private val disableDoubleBuffering = java.lang.Boolean.getBoolean("audit.disableDoubleBuffering")
+    private var doubleBufferingBeforeWindow = true
     private val paintTrace = mutableListOf<String>()
     private var paintTraceStarted: Long? = null
     private var droppedPaintRecords = 0L
@@ -106,6 +109,11 @@ private class NativeAudit(
             keyboard = PhysicalKeys(output.resolve("physical-os-state.jsonl"))
             inputTimings.add("startup\tserver\tOS\tready\t${keyboard.startupNanos / 1e6}")
             edt {
+                if (paintTraceEnabled || disableDoubleBuffering) {
+                    val manager = RepaintManager.currentManager(null)
+                    if (disableDoubleBuffering) manager.isDoubleBufferingEnabled = false
+                    doubleBufferingBeforeWindow = manager.isDoubleBufferingEnabled
+                }
                 val pair = openWindow(Settings(preferences))
                 frame = pair.first
                 panel = pair.second
@@ -132,6 +140,7 @@ private class NativeAudit(
             }
             delay(700)
             NativeInputGate.awaitReady(panel.audio, output)
+            if (paintTraceEnabled) writeGraphicsMetadata()
             pointer = PhysicalPointer(robot)
             // Refuse an unavailable capture facility before attempting hundreds of controls.
             snap("presentation-startup")
@@ -229,6 +238,52 @@ private class NativeAudit(
             }
         }
         check(failures == 0) { "$failures native control cases failed; see ${output.resolve("controls.tsv")}" }
+    }
+
+    private fun writeGraphicsMetadata() {
+        val record =
+            edt {
+                val configuration = checkNotNull(panel.graphicsConfiguration)
+                val device = configuration.device
+                val bounds = configuration.bounds
+                val mode = device.displayMode
+                val transform = DoubleArray(6).also { configuration.defaultTransform.getMatrix(it) }
+                val manager = RepaintManager.currentManager(panel)
+                val maximum = manager.doubleBufferMaximumSize
+                val properties =
+                    listOf(
+                        "sun.java2d.metal",
+                        "sun.java2d.opengl",
+                        "sun.java2d.xrender",
+                        "sun.java2d.d3d",
+                        "sun.java2d.noddraw",
+                        "sun.java2d.pmoffscreen",
+                        "sun.java2d.uiScale",
+                        "sun.java2d.renderer",
+                        "sun.java2d.trace",
+                        "sun.awt.noerasebackground",
+                        "swing.bufferPerWindow",
+                        "swing.volatileImageBufferEnabled",
+                    ).mapNotNull { name ->
+                        System.getProperty(name)?.let { value -> "${NativeAuditTools.quote(name)}:${NativeAuditTools.quote(value)}" }
+                    }.joinToString(",")
+                "{\"configuration_class\":${NativeAuditTools.quote(configuration.javaClass.name)}," +
+                    "\"device_class\":${NativeAuditTools.quote(device.javaClass.name)}," +
+                    "\"device_id\":${NativeAuditTools.quote(device.getIDstring())},\"device_type\":${device.type}," +
+                    "\"configuration_bounds\":[${bounds.x},${bounds.y},${bounds.width},${bounds.height}]," +
+                    "\"default_transform\":[${transform.joinToString(",")}]," +
+                    "\"display_mode\":[${mode.width},${mode.height},${mode.bitDepth},${mode.refreshRate}]," +
+                    "\"panel_size\":[${panel.width},${panel.height}],\"frame_size\":[${frame.width},${frame.height}]," +
+                    "\"panel_double_buffered\":${panel.isDoubleBuffered}," +
+                    "\"repaint_manager_class\":${NativeAuditTools.quote(manager.javaClass.name)}," +
+                    "\"requested_double_buffering_disabled\":$disableDoubleBuffering," +
+                    "\"manager_double_buffering_before_window\":$doubleBufferingBeforeWindow," +
+                    "\"manager_double_buffering_enabled\":${manager.isDoubleBufferingEnabled}," +
+                    "\"maximum_buffer_size\":[${maximum.width},${maximum.height}]," +
+                    "\"explicit_properties\":{$properties},\"epoch_millis\":${System.currentTimeMillis()}," +
+                    "\"nano_time\":${System.nanoTime()}}\n"
+            }
+        Files.writeString(output.resolve("graphics-metadata.json"), record)
     }
 
     /** Optional, bounded observations only; file writes happen after input cleanup. */

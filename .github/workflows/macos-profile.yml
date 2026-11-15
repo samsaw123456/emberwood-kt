@@ -24,7 +24,7 @@ on:
         type: choice
         required: true
         default: performance
-        options: [performance, controls, controls-targeted, controls-capture, compare-launchers, audio, audio-trace]
+        options: [performance, controls, controls-targeted, controls-capture, controls-buffering-compare, compare-launchers, audio, audio-trace]
 permissions:
   contents: read
 jobs:
@@ -65,6 +65,8 @@ jobs:
               python3 tools/mac_app_profile.py --audit audio --audio-trace ;;
             controls-capture)
               python3 tools/mac_app_profile.py --audit controls-capture --capture-trace ;;
+            controls-buffering-compare)
+              python3 tools/mac_capture_compare.py ;;
             compare-launchers)
               python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds "$SOAK_SECONDS" ;;
             *) exit 2 ;;
@@ -79,6 +81,7 @@ jobs:
             build/controls-native-app/
             build/controls-targeted-native-app/
             build/controls-capture-native-app/
+            build/controls-capture-comparison/
             build/performance-launcher-comparison/
             build/audio-native-app/
             build/reports/tests/

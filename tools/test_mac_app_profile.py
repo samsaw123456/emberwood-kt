@@ -50,6 +50,7 @@ class NativeAppConfigTests(unittest.TestCase):
                 )
                 configured = config.read_text()
                 self.assertNotIn("audio.trace.directory", configured)
+                self.assertNotIn("audit.disableDoubleBuffering", configured)
                 self.assertEqual(
                     "java-options=-Daudit.paintTrace=true\n" in configured,
                     mode == "controls-capture",
