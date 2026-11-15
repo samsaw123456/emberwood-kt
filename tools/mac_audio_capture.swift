@@ -73,6 +73,20 @@ struct BufferTiming: Codable {
     let deltaFromExpectedSeconds: Double?
 }
 
+struct CaptureClockAnchor: Codable {
+    let hostBeforeSeconds: Double
+    let unixSeconds: Double
+    let hostAfterSeconds: Double
+
+    static func sample() -> CaptureClockAnchor {
+        let clock = CMClockGetHostTimeClock()
+        let before = CMTimeGetSeconds(CMClockGetTime(clock))
+        let wall = Date().timeIntervalSince1970
+        let after = CMTimeGetSeconds(CMClockGetTime(clock))
+        return CaptureClockAnchor(hostBeforeSeconds: before, unixSeconds: wall, hostAfterSeconds: after)
+    }
+}
+
 struct CaptureTiming: Codable {
     let bufferCount: Int
     let minimumBufferFrames: Int?
@@ -81,6 +95,7 @@ struct CaptureTiming: Codable {
     let timestampOverlapCount: Int
     let missingTimestampCount: Int
     let comparisonToleranceSeconds: Double
+    let clockAnchors: [CaptureClockAnchor]
     let buffers: [BufferTiming]
 }
 
@@ -91,6 +106,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     var timings: [BufferTiming] = []
     var expectedPresentation: Double?
     let count = 96_000
+    let startClockAnchor = CaptureClockAnchor.sample()
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         queue.async { self.failure = error.localizedDescription }
@@ -172,7 +188,8 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             timestampGapCount: observed.filter { ($0.deltaFromExpectedSeconds ?? 0) > tolerance }.count,
             timestampOverlapCount: observed.filter { ($0.deltaFromExpectedSeconds ?? 0) < -tolerance }.count,
             missingTimestampCount: observed.filter { $0.presentationSeconds == nil }.count,
-            comparisonToleranceSeconds: tolerance, buffers: observed)
+            comparisonToleranceSeconds: tolerance,
+            clockAnchors: [startClockAnchor, CaptureClockAnchor.sample()], buffers: observed)
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

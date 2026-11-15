@@ -28,7 +28,11 @@ TARGETED_CONTROLS_CASES = (
 )
 
 
-def configure_app(app, tests, output, seconds, input_socket, audit="performance"):
+def configure_app(
+    app, tests, output, seconds, input_socket, audit="performance", *, audio_trace=False
+):
+    if audio_trace and audit != "audio":
+        raise ValueError("Audio tracing is only available for the audio audit")
     configs = list((app / "Contents/app").glob("*.cfg"))
     if len(configs) != 1:
         raise RuntimeError("Expected one native launcher configuration")
@@ -57,6 +61,8 @@ def configure_app(app, tests, output, seconds, input_socket, audit="performance"
     elif audit == "audio":
         main_class = "emberwood.AudioStateFixture"
         options.append("-Xlog:gc,safepoint:stderr:time,uptime,level,tags")
+        if audio_trace:
+            options.append(f"-Daudio.trace.directory={output / 'trace'}")
     else:
         raise ValueError("Unknown native audit mode")
     replacements = {
@@ -393,6 +399,37 @@ def launch_audio(app, output, game_digest):
     return validate_audio(pcm, app, game_digest)
 
 
+def validate_audio_trace(output):
+    trace = output / "trace"
+    summary_path = trace / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    if (
+        not isinstance(summary, dict)
+        or summary.get("result") != "PASS"
+        or summary.get("truncated") is not False
+        or summary.get("native_queue_disposed") is not True
+        or summary.get("errors") != []
+        or type(summary.get("event_count")) is not int
+        or summary["event_count"] <= 0
+        or type(summary.get("pcm_bytes")) is not int
+        or summary["pcm_bytes"] < 0
+    ):
+        raise RuntimeError("Audio trace is incomplete, truncated or failed")
+    if (
+        not (trace / "events.tsv").is_file()
+        or not (trace / "events.tsv").stat().st_size
+    ):
+        raise RuntimeError("Audio trace has no event journal")
+    if (trace / "samples.s16le").stat().st_size != summary["pcm_bytes"]:
+        raise RuntimeError("Audio trace PCM size does not match its summary")
+    return {
+        "result": "PASS",
+        "summary_sha256": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
+        "event_count": summary["event_count"],
+        "pcm_bytes": summary["pcm_bytes"],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -407,7 +444,14 @@ def main():
         help="Audit this existing native app instead of the distribution app",
     )
     parser.add_argument("--soak-seconds", type=int, default=30)
+    parser.add_argument(
+        "--audio-trace",
+        action="store_true",
+        help="Enable test-only clock and output tracing for --audit audio",
+    )
     args = parser.parse_args()
+    if args.audio_trace and args.audit != "audio":
+        parser.error("--audio-trace requires --audit audio")
     if platform.system() != "Darwin":
         parser.error("Run this diagnostic on macOS")
     if not 30 <= args.soak_seconds <= 1800:
@@ -416,6 +460,10 @@ def main():
     if "\n" in str(output) or "\r" in str(output):
         parser.error("Output path cannot contain a line break")
     output.mkdir(parents=True, exist_ok=True)
+    if args.audio_trace:
+        trace = output / "trace"
+        if trace.exists() and (not trace.is_dir() or any(trace.iterdir())):
+            parser.error("Use a fresh output directory for --audio-trace")
     (output / "completion.json").unlink(missing_ok=True)
     version = (ROOT / "VERSION").read_text().strip()
     arch = {"arm64": "aarch64"}.get(platform.machine(), platform.machine())
@@ -456,6 +504,10 @@ def main():
             expected_filtered_cases=TARGETED_CONTROLS_CASES,
             full_inventory_verified=False,
         )
+    if args.audit == "audio":
+        evidence["audio_trace_directory"] = (
+            str(output / "trace") if args.audio_trace else None
+        )
     with (
         tempfile.TemporaryDirectory(prefix="emberwood native profile ") as temporary,
         ExitStack() as controllers,
@@ -477,6 +529,7 @@ def main():
             args.soak_seconds,
             controller.path if controller else None,
             args.audit,
+            audio_trace=args.audio_trace,
         )
         # Re-sign only the enclosing app: its already signed runtime stays identical.
         subprocess.run([ROOT / "tools/sign_mac_app.sh", app], check=True, timeout=90)
@@ -523,6 +576,8 @@ def main():
                     "Native audit changed production game or runtime bytes"
                 )
             if args.audit == "audio":
+                if args.audio_trace:
+                    evidence["audio_trace_completion"] = validate_audio_trace(output)
                 (output / "completion.json").write_text(
                     json.dumps(evidence["audit_completion"], indent=2) + "\n"
                 )

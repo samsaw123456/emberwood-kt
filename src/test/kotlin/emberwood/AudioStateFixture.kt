@@ -11,10 +11,12 @@ object AudioStateFixture {
     @JvmStatic
     fun main(args: Array<String>) {
         require(args.size == 2 && args[0] == "--data-dir")
+        val trace = System.getProperty("audio.trace.directory")?.let { MacAudioTrace(Path.of(it)) }
         lateinit var frame: JFrame
         lateinit var panel: GamePanel
         SwingUtilities.invokeAndWait {
-            val window = openWindow(Settings(Path.of(args[1])))
+            val settings = Settings(Path.of(args[1]))
+            val window = trace?.openWindow(settings) ?: openWindow(settings)
             frame = window.first
             panel = window.second
         }
@@ -24,6 +26,7 @@ object AudioStateFixture {
                 if (line == "quit") break
                 var response = ""
                 SwingUtilities.invokeAndWait {
+                    trace?.event("command-$line")
                     when {
                         line.startsWith("state ") -> {
                             val state = GameState.valueOf(line.substringAfter(' '))
@@ -70,6 +73,7 @@ object AudioStateFixture {
             }
         } finally {
             SwingUtilities.invokeAndWait { frame.dispose() }
+            trace?.finish()
         }
     }
 

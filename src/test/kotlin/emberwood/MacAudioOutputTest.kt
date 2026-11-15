@@ -179,7 +179,7 @@ class MacAudioOutputTest {
         }
     }
 
-    private class FakeQueue :
+    internal class FakeQueue :
         MacAudioQueueApi,
         AutoCloseable {
         private val memory = Arena.ofShared()

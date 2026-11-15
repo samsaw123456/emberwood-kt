@@ -42,6 +42,7 @@ class NativeAppConfigTests(unittest.TestCase):
                     app, classes.parent, root / "output", 180, root / "input.sock", mode
                 )
                 configured = config.read_text()
+                self.assertNotIn("audio.trace.directory", configured)
                 self.assertIn(f"app.mainclass={main}\n", configured)
                 self.assertIn("app.classpath=$APPDIR/native-audit.jar\n", configured)
                 self.assertIn(

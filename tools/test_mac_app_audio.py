@@ -10,7 +10,30 @@ import wave
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from mac_app_profile import launch_audio, main, run_owned_check, validate_audio
+from mac_app_profile import (
+    launch_audio,
+    main,
+    run_owned_check,
+    validate_audio,
+    validate_audio_trace,
+)
+
+
+def trace_fixture(output):
+    trace = output / "trace"
+    trace.mkdir()
+    (trace / "events.tsv").write_text("kind\tpcm_offset\nwrite\t0\n")
+    (trace / "samples.s16le").write_bytes(b"\x01\x00")
+    summary = {
+        "result": "PASS",
+        "truncated": False,
+        "native_queue_disposed": True,
+        "errors": [],
+        "event_count": 1,
+        "pcm_bytes": 2,
+    }
+    (trace / "summary.json").write_text(json.dumps(summary))
+    return summary
 
 
 def fixture(output, app):
@@ -70,9 +93,9 @@ def fixture(output, app):
 
 class NativeAudioDriverTests(unittest.TestCase):
     def test_audio_mode_uses_selected_app_shared_signer_and_after_run_identity(self):
-        for tamper in (False, True):
+        for tamper, audio_trace in ((False, False), (False, True), (True, True)):
             with (
-                self.subTest(tamper=tamper),
+                self.subTest(tamper=tamper, audio_trace=audio_trace),
                 tempfile.TemporaryDirectory() as directory,
             ):
                 root = Path(directory).resolve()
@@ -109,13 +132,28 @@ class NativeAudioDriverTests(unittest.TestCase):
                         self.assertEqual(len(command), 2)
 
                 def audited(
-                    copy, target, _digest, *, app=app, output=output, tamper=tamper
+                    copy,
+                    target,
+                    _digest,
+                    *,
+                    app=app,
+                    output=output,
+                    tamper=tamper,
+                    audio_trace=audio_trace,
                 ):
                     self.assertNotEqual(copy, app)
                     self.assertEqual(target, output)
                     text = (copy / "Contents/app/Emberwood Kotlin.cfg").read_text()
                     self.assertIn("app.mainclass=emberwood.AudioStateFixture", text)
                     self.assertNotIn("audit.inputSocket", text)
+                    if audio_trace:
+                        self.assertIn(
+                            f"java-options=-Daudio.trace.directory={output / 'trace'}\n",
+                            text,
+                        )
+                        trace_fixture(output)
+                    else:
+                        self.assertNotIn("audio.trace.directory", text)
                     if tamper:
                         (copy / "Contents/runtime/Contents/Home/bin/java").write_bytes(
                             b"changed"
@@ -136,7 +174,8 @@ class NativeAudioDriverTests(unittest.TestCase):
                             str(app),
                             "--output",
                             str(output),
-                        ],
+                        ]
+                        + (["--audio-trace"] if audio_trace else []),
                     ),
                     patch(
                         "mac_app_profile.default_output", return_value={"fixture": True}
@@ -154,9 +193,55 @@ class NativeAudioDriverTests(unittest.TestCase):
                 evidence = json.loads((output / "native-app.json").read_text())
                 self.assertEqual(evidence["result"], "FAIL" if tamper else "PASS")
                 self.assertEqual(evidence["original_app"], str(app.resolve()))
+                self.assertEqual(
+                    evidence["audio_trace_directory"],
+                    str(output / "trace") if audio_trace else None,
+                )
                 self.assertEqual((output / "completion.json").exists(), not tamper)
                 self.assertEqual(runtime.read_bytes(), b"private runtime fixture")
                 self.assertEqual(len(commands), 2)
+
+    def test_audio_trace_refuses_failed_truncated_unclosed_or_partial_evidence(self):
+        mutations = [
+            {"result": "FAIL"},
+            {"truncated": True},
+            {"native_queue_disposed": False},
+            {"errors": ["write failed"]},
+            {"pcm_bytes": 4},
+            {"event_count": 0},
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder)
+            original = trace_fixture(output)
+            self.assertEqual(validate_audio_trace(output)["result"], "PASS")
+            for mutation in mutations:
+                with self.subTest(mutation=mutation):
+                    (output / "trace/summary.json").write_text(
+                        json.dumps(original | mutation)
+                    )
+                    with self.assertRaises(RuntimeError):
+                        validate_audio_trace(output)
+            (output / "trace/summary.json").write_text(json.dumps(original))
+            (output / "trace/events.tsv").unlink()
+            with self.assertRaisesRegex(RuntimeError, "no event journal"):
+                validate_audio_trace(output)
+
+    def test_audio_trace_refuses_other_modes_before_native_access(self):
+        for mode in ("performance", "controls", "controls-targeted"):
+            with (
+                self.subTest(mode=mode),
+                patch(
+                    "mac_app_profile.sys.argv",
+                    ["audit", "--audit", mode, "--audio-trace"],
+                ),
+                patch("mac_app_profile.default_output") as output,
+                patch("mac_app_profile.subprocess.run") as native,
+                self.assertRaises(SystemExit) as failure,
+            ):
+                main()
+            self.assertEqual(failure.exception.code, 2)
+            output.assert_not_called()
+            native.assert_not_called()
 
     def test_partial_wrong_identity_or_failed_cleanup_never_validate(self):
         mutations = [
