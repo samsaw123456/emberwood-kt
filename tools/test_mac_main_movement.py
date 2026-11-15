@@ -209,11 +209,10 @@ class MainMovementTests(unittest.TestCase):
         child = (
             "import json,sys,time\nfrom pathlib import Path\n"
             "spec=json.loads(sys.argv[1]);out=Path(spec['output']).parent\n"
-            "(out/'ready').write_text('ready');print('READY',flush=True)\n"
+            "ready=time.monotonic();(out/'ready').write_text(str(ready));print('READY',flush=True)\n"
             "assert sys.stdin.readline().strip()=='GO'\n"
-            "assert (out/'armed').read_text()=='armed'\n"
-            "down=time.monotonic();time.sleep(spec['seconds']);up=time.monotonic()\n"
-            "Path(spec['output']).write_text(json.dumps({'result':'PASS bounded physical hold','down':down,'up':up}))\n"
+            "go=time.monotonic();armed=json.loads((out/'armed').read_text())\n"
+            "Path(spec['output']).write_text(json.dumps({'result':'PASS bounded physical hold','ready':ready,'armed':armed,'go':go}))\n"
         )
 
         def spawn(command, **kwargs):
@@ -223,16 +222,23 @@ class MainMovementTests(unittest.TestCase):
             output = Path(directory)
 
             def arm():
-                self.assertEqual((output / "ready").read_text(), "ready")
-                time.sleep(0.1)  # Observation startup must not consume the hold.
-                (output / "armed").write_text("armed")
+                began = time.monotonic()
+                self.assertLessEqual(float((output / "ready").read_text()), began)
+                (output / "armed").write_text(
+                    json.dumps({"began": began, "finished": time.monotonic()})
+                )
 
             with patch("mac_main_movement.subprocess.Popen", side_effect=spawn):
                 receipt = run_hold(
                     output, 42, Path("/owned"), 7, "left", 0.35, "left", before_go=arm
                 )
-            self.assertGreater(receipt["up"] - receipt["down"], 0.34)
-            self.assertLess(receipt["up"] - receipt["down"], 0.45)
+            # This IPC fixture proves ordering, not the host's sleep precision.
+            # timed_hold's clock/release tests independently enforce its budget.
+            self.assertLessEqual(receipt["ready"], receipt["armed"]["began"])
+            self.assertLessEqual(
+                receipt["armed"]["began"], receipt["armed"]["finished"]
+            )
+            self.assertLessEqual(receipt["armed"]["finished"], receipt["go"])
 
     def test_sample_missing_output_or_failure_cannot_pass(self):
         for code, contents in ((0, None), (0, ""), (1, "partial sample")):
