@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Play the independent Kotlin edition with the existing Emberwood artwork.
+# Keep this launcher and the Zed task current whenever this game changes.
+set -euo pipefail
+root=$(CDPATH="" cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+cd -- "$root"
+build_only=false
+offline=false
+case ${1:-} in
+    --help|-h)
+        printf '%s\n' 'Emberwood Kotlin' 'Usage: ./emberwood-kotlin [--build | --offline] [game options]' \
+            'First source launch downloads a private Java 25 and builds the game.' \
+            'Bundled application downloads need no Java, Gradle or developer tools.' \
+            '  --build     prepare the game without opening a window' \
+            '  --offline   use an existing build without downloading anything'
+        exit 0 ;;
+    --build) build_only=true; shift ;;
+    --offline) offline=true; shift ;;
+esac
+if $build_only && (($#)); then printf '%s\n' '--build accepts no game arguments.' >&2; exit 2; fi
+if $offline; then java_home=$(tools/bootstrap.sh --offline); else java_home=$(tools/bootstrap.sh); fi
+export JAVA_HOME="$java_home"
+jar=build/libs/emberwood-kotlin.jar
+needs_build=false
+[[ -f "$jar" ]] || needs_build=true
+if [[ -f "$jar" ]] && [[ -n $(find src build.gradle.kts settings.gradle.kts gradle.properties VERSION -newer "$jar" -print -quit) ]]; then needs_build=true; fi
+if $build_only || $needs_build; then
+    if $offline; then printf '%s\n' 'No current game build is available. Run ./emberwood-kotlin --build online first.' >&2; exit 2; fi
+    printf '%s\n' 'Building Emberwood Kotlin. Later launches run directly and work offline.' >&2
+    ./gradlew --console=plain --no-daemon fatJar
+fi
+if $build_only; then printf '%s\n' 'Ready. Open ./emberwood-kotlin to play.'; exit 0; fi
+exec "$java_home/bin/java" -Xms32m -Xmx256m --enable-native-access=ALL-UNNAMED -jar "$jar" "$@"

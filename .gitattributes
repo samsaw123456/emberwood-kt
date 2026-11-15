@@ -1,0 +1,2 @@
+# Preserve the imported artwork, metadata and license bytes on every platform.
+src/main/resources/assets/** -text
