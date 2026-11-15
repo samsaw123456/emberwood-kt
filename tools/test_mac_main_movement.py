@@ -541,14 +541,18 @@ class MainMovementTests(unittest.TestCase):
         self.assertAlmostEqual(record["up_post_started"], 100.6)
         self.assertGreater(record["release_lateness_seconds"], 0.2)
 
-    def test_capture_can_block_longer_than_the_independent_process_hold(self):
+    def test_child_releases_while_parent_capture_remains_blocked(self):
         real_popen = subprocess.Popen
         child = (
             "import json,sys,time\n"
             "from pathlib import Path\n"
             "spec=json.loads(sys.argv[1]);print('READY',flush=True)\n"
             "assert sys.stdin.readline().strip()=='GO'\n"
-            "down=time.monotonic();time.sleep(spec['seconds']);up=time.monotonic()\n"
+            "out=Path(spec['output']);down=time.monotonic();deadline=down+3\n"
+            "while not (out.parent/'capture-started').exists():\n"
+            " assert time.monotonic()<deadline,'parent capture never started'\n"
+            " time.sleep(.005)\n"
+            "time.sleep(spec['seconds']);up=time.monotonic()\n"
             "Path(spec['output']).write_text(json.dumps({'result':'PASS bounded physical hold','down':down,'up':up}))\n"
         )
 
@@ -559,17 +563,33 @@ class MainMovementTests(unittest.TestCase):
             tempfile.TemporaryDirectory(prefix="main probe spaces ") as directory,
             patch("mac_main_movement.subprocess.Popen", side_effect=spawn),
         ):
+            output, captured = Path(directory), {}
+
+            def blocked_capture():
+                captured["began"] = time.monotonic()
+                (output / "capture-started").write_text("started")
+                deadline = time.monotonic() + 3
+                while not (output / "input-left.json").exists():
+                    if time.monotonic() >= deadline:
+                        self.fail(
+                            "Child release waited for the blocked capture to finish"
+                        )
+                    time.sleep(0.005)
+                captured["finished"] = time.monotonic()
+
             receipt = run_hold(
-                Path(directory),
+                output,
                 42,
                 Path("/owned app/game"),
                 7,
                 "left",
                 0.35,
                 "left",
-                lambda: time.sleep(0.9),
+                blocked_capture,
             )
-        self.assertLess(receipt["up"] - receipt["down"], 0.45)
+        self.assertLess(receipt["down"], receipt["up"])
+        self.assertLess(captured["began"], receipt["up"])
+        self.assertLess(receipt["up"], captured["finished"])
 
     def test_wrong_process_window_and_geometry_refuse_input(self):
         for executable, window in (
