@@ -3,6 +3,7 @@
 
 import ctypes
 import sys
+import time
 
 CODES = {
     # name: X11 keysym, macOS hardware keycode
@@ -35,15 +36,47 @@ if sys.platform == "darwin":
     ]
     core.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
     core.CGEventPost.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    core.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+    core.CGEventSourceFlagsState.argtypes = [ctypes.c_int]
+    core.CGEventSourceFlagsState.restype = ctypes.c_uint64
+    core.CGEventSourceKeyState.argtypes = [ctypes.c_int, ctypes.c_ushort]
+    core.CGEventSourceKeyState.restype = ctypes.c_bool
     core.CFRelease.argtypes = [ctypes.c_void_p]
+    shifts = {
+        key: bool(core.CGEventSourceKeyState(0, CODES[key][1]))
+        for key in ("left-shift", "right-shift")
+    }
     for key, action in events:
         event = core.CGEventCreateKeyboardEvent(None, CODES[key][1], action == "down")
         if not event:
             raise RuntimeError("Cannot create physical keyboard event")
         try:
+            if key in shifts:
+                shifts[key] = action == "down"
+                # Apple IOLLEvent.h: preserve both device-side bits and the
+                # aggregate Shift bit when the other physical Shift stays held.
+                flags = core.CGEventSourceFlagsState(0) & ~(0x20000 | 0x2 | 0x4)
+                if shifts["left-shift"]:
+                    flags |= 0x20000 | 0x2
+                if shifts["right-shift"]:
+                    flags |= 0x20000 | 0x4
+                core.CGEventSetFlags(event, flags)
             core.CGEventPost(0, event)
         finally:
             core.CFRelease(event)
+    # AWT omits a second-side modifier event when aggregate flags do not change.
+    # Verify the physical OS key state independently instead of fabricating AWT events.
+    desired = {key: action == "down" for key, action in events}
+    deadline = time.monotonic() + 1
+    while any(
+        core.CGEventSourceKeyState(0, CODES[key][1]) != down
+        for key, down in desired.items()
+    ):
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "macOS did not acknowledge the injected physical key state"
+            )
+        time.sleep(0.005)
 else:
     x11 = ctypes.CDLL("libX11.so.6")
     xtest = ctypes.CDLL("libXtst.so.6")

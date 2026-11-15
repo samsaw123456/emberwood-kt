@@ -75,6 +75,15 @@ guidance](https://developer.apple.com/library/archive/technotes/tn2206/) and the
 The corrected macOS path must pass the native CI installation/GUI checks before
 it is called verified.
 
+Java 25 also validates macOS's internal `CFBundleVersion` with a positive first
+component. Packaging maps the release major version to major + 1 for that build
+field (0.1.0 becomes 1.1.0), while `CFBundleShortVersionString`, the game and the
+download keep the actual release version 0.1.0. The native installation test
+checks both fields. The validation rule is in [OpenJDK's macOS bundle-version
+parser](https://github.com/openjdk/jdk25u/blob/master/src/jdk.jpackage/macosx/classes/jdk/jpackage/internal/CFBundleVersion.java).
+Both macOS architectures in CI run `43695656000` caught this validation failure;
+the metadata correction still requires a successful native package/install run.
+
 ## Actual Linux package and launcher checks
 
 The Linux x86-64 candidate was built with `python3 tools/package_app.py --skip-build`.
@@ -97,4 +106,7 @@ the title and paused screen were inspected. A repeat under an isolated Openbox
 window manager pressed physical Alt+F4 and verified that the installed process
 exited. The original **Emberwood** desktop entry
 and repository remain unchanged. Local evidence is in `build/installed-audit/`,
-`build/installed-user-audit/`, and `build/package-install-audit.log`.
+`build/installed-user-audit/`, `build/installed-physical-close-final.log`, and
+`build/package-install-final.log`. This installed candidate matches the measured
+game JAR SHA-256
+`02b181548e236c13eae655d803e217949dda208ed538e1a4b882dc68a475536a`.

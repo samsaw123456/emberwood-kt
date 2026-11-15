@@ -27,6 +27,7 @@ object CampaignAudit {
         var panel: GamePanel? = null
         val held = mutableSetOf<Int>()
         val delivery = ConcurrentHashMap<Pair<Int, Boolean>, CountDownLatch>()
+        val observedInput = Game::class.java.getDeclaredField("lastInput").apply { isAccessible = true }
         val results = mutableListOf<String>()
 
         fun edt(action: () -> Unit) = SwingUtilities.invokeAndWait(action)
@@ -92,7 +93,16 @@ object CampaignAudit {
                         var advanced = false
                         while (!advanced) {
                             robot.delay(1)
-                            edt { advanced = game.level.age > age || game.state != GameState.PLAYING }
+                            edt {
+                                val applied = observedInput.get(game) as InputFrame
+                                advanced = game.state != GameState.PLAYING ||
+                                    (
+                                        game.level.age > age &&
+                                            applied.left == input.left &&
+                                            applied.right == input.right &&
+                                            applied.jumpHeld == input.jumpHeld
+                                    )
+                            }
                             check(System.nanoTime() < deadline) { "Game stopped advancing during native input" }
                         }
                     }

@@ -29,6 +29,11 @@ def checksum(path):
 
 def build_mac_app(java_home, jar, runtime, stage, version):
     """Use the JDK's native launcher and standard signed macOS bundle layout."""
+    # CFBundleVersion cannot begin with zero. Keep a monotonic internal build
+    # version while retaining the release version in CFBundleShortVersionString.
+    bundle_components = version.split(".")
+    bundle_components[0] = str(int(bundle_components[0]) + 1)
+    bundle_version = ".".join(bundle_components)
     iconset = stage / "Emberwood.iconset"
     iconset.mkdir()
     source_icon = ROOT / "src/main/resources/assets/app/emberwood.png"
@@ -67,7 +72,7 @@ def build_mac_app(java_home, jar, runtime, stage, version):
         "--runtime-image",
         runtime,
         "--app-version",
-        version,
+        bundle_version,
         "--vendor",
         "Emberwood contributors",
         "--mac-package-identifier",
@@ -88,6 +93,7 @@ def build_mac_app(java_home, jar, runtime, stage, version):
     plist = app / "Contents/Info.plist"
     with plist.open("rb") as stream:
         metadata = plistlib.load(stream)
+    metadata["CFBundleShortVersionString"] = version
     metadata["LSMinimumSystemVersion"] = "12.0"
     with plist.open("wb") as stream:
         plistlib.dump(metadata, stream)

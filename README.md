@@ -8,6 +8,8 @@ artwork. The original Godot game remains a separate application.
 
 Download the file for your computer from
 [Releases](https://github.com/samsaw123456/emberwood-kt/releases).
+For Intel or AMD processors, choose `x86_64` or `amd64`; for ARM processors,
+choose `aarch64` or `arm64`.
 
 - **Ubuntu or Debian:** open the `.deb` file and choose Install. The system installer
   supplies any missing desktop libraries. Open **Emberwood Kotlin** in Applications.

@@ -1,5 +1,8 @@
 package emberwood
 
+import java.awt.Color
+import java.awt.Graphics
+import java.awt.RenderingHints
 import java.awt.Robot
 import java.awt.event.InputEvent
 import java.awt.event.KeyAdapter
@@ -9,6 +12,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
+import javax.swing.JComponent
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
 import kotlin.math.abs
@@ -27,6 +31,8 @@ private class NativeAudit(
     private val rows = mutableListOf<String>()
     private val evidence = mutableListOf<String>()
     private val pendingImages = mutableListOf<Pair<String, BufferedImage>>()
+    private val presentationTimings = mutableListOf<String>()
+    private var presentationMarker = Color(251, 0, 4)
 
     private data class Delivery(
         val count: Int,
@@ -37,6 +43,8 @@ private class NativeAudit(
     private val inputTimings = mutableListOf<String>()
     private var currentCase = "startup"
     private val selectedCases = System.getProperty("audit.filter")?.let(::Regex)
+    private val macOS = System.getProperty("os.name").startsWith("Mac")
+    private val observedDesktopState = GamePanel::class.java.getDeclaredField("previousState").apply { isAccessible = true }
     private val downKeys = mutableSetOf<Int>()
     private val nativeKeys = mutableSetOf<String>()
     private var sequence = 0
@@ -54,6 +62,19 @@ private class NativeAudit(
                 val pair = openWindow(Settings(preferences))
                 frame = pair.first
                 panel = pair.second
+                frame.glassPane =
+                    object : JComponent() {
+                        override fun contains(
+                            x: Int,
+                            y: Int,
+                        ) = false
+
+                        override fun paintComponent(graphics: Graphics) {
+                            graphics.color = presentationMarker
+                            graphics.fillRect(8, 8, 6, 6)
+                        }
+                    }
+                frame.glassPane.isVisible = true
                 panel.addKeyListener(
                     object : KeyAdapter() {
                         override fun keyPressed(event: KeyEvent) = delivered(event, true)
@@ -83,7 +104,12 @@ private class NativeAudit(
                     "Inspect every referenced screenshot; audio output is audited separately.",
             )
         } finally {
-            releaseAll()
+            try {
+                releaseAll()
+            } catch (failure: Throwable) {
+                failures++
+                failure.printStackTrace()
+            }
             if (::frame.isInitialized) edt { frame.dispose() }
             flushImages()
             Files.writeString(
@@ -96,6 +122,10 @@ private class NativeAudit(
             Files.writeString(
                 output.resolve("input-latency.tsv"),
                 "Case\tKey code\tLocation\tAction\tDelivery milliseconds\n" + inputTimings.joinToString("\n") + "\n",
+            )
+            Files.writeString(
+                output.resolve("presentation-latency.tsv"),
+                "Case\tFrame\tPresentation milliseconds\n" + presentationTimings.joinToString("\n") + "\n",
             )
         }
         check(failures == 0) { "$failures native control cases failed; see ${output.resolve("controls.tsv")}" }
@@ -124,7 +154,13 @@ private class NativeAudit(
             failure.printStackTrace()
             if (::panel.isInitialized) runCatching { snap("$state-$binding-failure") }
         } finally {
-            releaseAll()
+            try {
+                releaseAll()
+            } catch (failure: Throwable) {
+                failures++
+                failure.printStackTrace()
+                result = "FAIL recovery: ${failure.message}".replace('\t', ' ').replace('\n', ' ')
+            }
             flushImages()
             rows.add("$binding\t$state\t$expected\t$result\t${evidence.joinToString(", ")}")
         }
@@ -179,12 +215,24 @@ private class NativeAudit(
             panel.requestFocusInWindow()
             panel.repaint()
         }
+        // Read-only fixture instrumentation: the desktop must finish transition bookkeeping before
+        // the first physical key, otherwise its focus reset can undo a valid navigation step.
+        await("Desktop observes staged $state transition") { edt { observedDesktopState.get(panel) == state } }
         await("Native window/panel keyboard focus") { edt { frame.isFocused && panel.isFocusOwner } }
     }
 
-    private fun snap(label: String): BufferedImage {
+    private fun snap(
+        label: String,
+        observe: () -> Unit = {},
+    ): BufferedImage {
         // waitForIdle repeatedly waits for this continuously animated window and extends held input.
-        edt { panel.paintImmediately(0, 0, panel.width, panel.height) }
+        val started = System.nanoTime()
+        val marker = Color(251, (sequence * 37) % 250 + 1, 4)
+        edt {
+            observe()
+            presentationMarker = marker
+            frame.rootPane.paintImmediately(0, 0, frame.rootPane.width, frame.rootPane.height)
+        }
         java.awt.Toolkit
             .getDefaultToolkit()
             .sync()
@@ -193,11 +241,41 @@ private class NativeAudit(
                 val p = panel.locationOnScreen
                 java.awt.Rectangle(p.x, p.y, panel.width, panel.height)
             }
-        val image = robot.createScreenCapture(bounds)
+        // Cocoa may return the previous compositor frame after paintImmediately. A marker in the
+        // same window proves presentation; it never intercepts input or changes game state.
+        var image = robot.createScreenCapture(bounds)
+        await("Desktop presentation for $label") {
+            if ((image.getRGB(10, 10) and 0xffffff) == (marker.rgb and 0xffffff)) {
+                true
+            } else {
+                image = robot.createScreenCapture(bounds)
+                false
+            }
+        }
         val name = "%04d-%s.png".format(sequence++, label.replace(Regex("[^A-Za-z0-9-]"), "-").take(110))
+        presentationTimings.add("$currentCase\t$name\t${(System.nanoTime() - started) / 1e6}")
         pendingImages.add(name to image)
         evidence.add(name)
-        return image
+        return logicalView(image)
+    }
+
+    private fun logicalView(image: BufferedImage): BufferedImage {
+        if (image.width == 1152 && image.height == 648) return image
+        // Only analysis is normalized. Evidence preserves the actual desktop size and letterbox.
+        val scale = minOf(image.width / 1152.0, image.height / 648.0)
+        val width = (1152 * scale).toInt()
+        val height = (648 * scale).toInt()
+        val x = (image.width - width) / 2
+        val y = (image.height - height) / 2
+        val normalized = BufferedImage(1152, 648, BufferedImage.TYPE_INT_RGB)
+        val graphics = normalized.createGraphics()
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR)
+            graphics.drawImage(image, 0, 0, 1152, 648, x, y, x + width, y + height, null)
+        } finally {
+            graphics.dispose()
+        }
+        return normalized
     }
 
     private fun flushImages() {
@@ -264,9 +342,22 @@ private class NativeAudit(
     private fun physical(vararg events: Pair<String, Boolean>) {
         val command = mutableListOf("python3", "tools/physical_key.py")
         val expected = mutableMapOf<Triple<Int, Int, Boolean>, Int>()
+        val shifted = nativeKeys.filter { it.endsWith("shift") }.toMutableSet()
+        if (KeyEvent.VK_SHIFT in downKeys) shifted.add("left-shift")
+        val aggregateOnly = mutableListOf<Pair<String, Boolean>>()
         for ((key, down) in events) {
             command.add(key)
             command.add(if (down) "down" else "up")
+            if (macOS && key.endsWith("shift")) {
+                val wasShifted = shifted.isNotEmpty()
+                if (down) shifted.add(key) else shifted.remove(key)
+                if (wasShifted == shifted.isNotEmpty()) {
+                    // OpenJDK AWTEvent.m reports modifiers only when aggregate flags change.
+                    // physical_key.py independently verifies these OS key states.
+                    aggregateOnly.add(key to down)
+                    continue
+                }
+            }
             val (code, where) =
                 when (key) {
                     "left-shift" -> KeyEvent.VK_SHIFT to KeyEvent.KEY_LOCATION_LEFT
@@ -290,6 +381,9 @@ private class NativeAudit(
         }
         val started = System.nanoTime()
         check(ProcessBuilder(command).inheritIO().start().waitFor() == 0) { "Native physical key injection failed" }
+        for ((key, down) in aggregateOnly) {
+            inputTimings.add("$currentCase\t$key\tOS\t$down (AWT aggregate unchanged)\t${(System.nanoTime() - started) / 1e6}")
+        }
         for ((key, down) in events) if (down) nativeKeys.add(key) else nativeKeys.remove(key)
         if (edt { frame.isFocused }) for ((binding, count) in expected) received(binding, count, started)
     }
@@ -427,14 +521,15 @@ private class NativeAudit(
                 "Opposing controls cancel; releasing left leaves rightward movement",
             ) {
                 val before = foxCenter(snap("opposed-start")).first
-                down(left)
-                down(right)
+                val leftName = if (left == KeyEvent.VK_A) "a" else "left"
+                val rightName = if (right == KeyEvent.VK_D) "d" else "right"
+                physical(leftName to true, rightName to true)
                 robot.delay(200)
                 check(abs(foxCenter(snap("opposed-held")).first - before) < 12)
-                up(left)
+                physical(leftName to false)
                 robot.delay(170)
                 check(foxCenter(snap("opposed-release-left")).first > before + 15)
-                up(right)
+                physical(rightName to false)
             }
         }
         for ((first, second, sign) in listOf(
@@ -478,8 +573,7 @@ private class NativeAudit(
                 snap("jump-second")
                 up(key)
                 tap(key)
-                snap("jump-third-rejected")
-                check(edt { panel.game.player.jumpsLeft == 0 })
+                snap("jump-third-rejected") { check(panel.game.player.jumpsLeft == 0) }
                 robot.delay(1100)
                 snap("jump-landed")
                 check(edt { panel.game.player.grounded && panel.game.player.jumpsLeft == 2 })
@@ -498,10 +592,10 @@ private class NativeAudit(
             physical("space" to false, "w" to false)
             snap("jump-up-still-held")
             check(edt { panel.game.player.jumpsLeft == 1 })
-            physical("up" to false)
-            tap(KeyEvent.VK_SPACE)
-            snap("jump-alternate-repress")
-            check(edt { panel.game.player.jumpsLeft == 0 })
+            physical("up" to false, "space" to true)
+            await("Alternate jump is consumed") { edt { panel.game.player.jumpsLeft == 0 } }
+            snap("jump-alternate-repress") { check(panel.game.player.jumpsLeft == 0) }
+            physical("space" to false)
         }
     }
 
@@ -513,7 +607,7 @@ private class NativeAudit(
                 "The camera anchors the fox while scenery moves opposite the requested world direction; release stops movement",
             ) {
                 edt {
-                    val x = if (sign > 0) 680.0 else 800.0
+                    val x = if (sign > 0) 3510.0 else 3600.0
                     panel.game.player.reset(Vec(x, 536.0))
                     panel.game.cameraX = x - 380
                 }
@@ -521,15 +615,20 @@ private class NativeAudit(
                 click("motion")
                 snap("gentle-camera-setting")
                 tap(KeyEvent.VK_ESCAPE)
+                // Warm the original middle clearing before measuring its interior camera tracking.
+                robot.delay(250)
 
                 fun spikeEdge(image: BufferedImage): Int {
                     // The first visible salmon spike-base strip is an independent world landmark.
-                    val edge = (0 until image.width).firstOrNull { (image.getRGB(it, 534) and 0xffffff) == 0xe2987f }
+                    val edge =
+                        (0 until image.width).firstOrNull { x ->
+                            (530..535).any { y -> (image.getRGB(x, y) and 0xffffff) == 0xe2987f }
+                        }
                     return checkNotNull(edge) { "World landmark is not visible" }
                 }
                 val before = snap("gentle-camera-before")
                 down(key)
-                robot.delay(210)
+                robot.delay(140)
                 val during = snap("gentle-camera-held")
                 check(abs(foxCenter(during).first - foxCenter(before).first) < 20) { "Gentle camera did not anchor the fox" }
                 check((spikeEdge(during) - spikeEdge(before)) * sign < -15) { "Scenery moved in the wrong direction" }
@@ -649,6 +748,11 @@ private class NativeAudit(
                     robot.delay(220)
                     snap("second-shift-after-cooldown")
                     check(abs(edt { panel.game.player.x } - before) < 2) { "Second physical Shift retriggered an already held dash" }
+                    physical(second to false)
+                    robot.delay(160)
+                    snap("opposite-shift-released-first-still-held")
+                    check(abs(edt { panel.game.player.x } - before) < 2)
+                    physical(second to true)
                     physical(first to false)
                     robot.delay(160)
                     check(abs(edt { panel.game.player.x } - before) < 2)
@@ -732,24 +836,23 @@ private class NativeAudit(
             ) {
                 physical(key to true, "j" to true)
                 robot.delay(70)
-                snap("turn-shot")
-                check(
-                    edt {
+                snap("turn-shot") {
+                    check(
                         panel.game.shots.isNotEmpty() &&
                             panel.game.shots.all { it.direction == sign } &&
-                            panel.game.player.facing == sign
-                    },
-                )
+                            panel.game.player.facing == sign,
+                    )
+                }
                 physical(key to false, "j" to false)
             }
             case("$key + Space + Shift", GameState.PLAYING, "Movement, jump and air dash remain responsive; release stops movement") {
+                edt { panel.game.player.reset(Vec(if (sign > 0) 140.0 else 430.0, 536.0)) }
                 physical(key to true, "space" to true)
                 robot.delay(100)
                 snap("moving-jump")
                 physical("space" to false, "left-shift" to true)
                 robot.delay(130)
-                snap("moving-air-dash")
-                check(edt { panel.game.player.y < 510 && panel.game.player.facing == sign })
+                snap("moving-air-dash") { check(panel.game.player.y < 510 && panel.game.player.facing == sign) }
                 physical(key to false, "left-shift" to false)
             }
         }

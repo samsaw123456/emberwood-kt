@@ -288,6 +288,12 @@ class GamePanel(
 
     private fun release(event: KeyEvent) {
         physical.remove(event.keyCode to event.keyLocation)
+        // macOS AWT reports only aggregate Shift transitions. If one Shift is
+        // released while the other remains held, the final release may carry
+        // the opposite location from the only press AWT delivered.
+        if (event.keyCode == KeyEvent.VK_SHIFT && !event.isShiftDown && System.getProperty("os.name").startsWith("Mac")) {
+            physical.removeAll { it.first == KeyEvent.VK_SHIFT }
+        }
         val wasJumping = jumping()
         if (physical.none { it.first == event.keyCode }) held.remove(event.keyCode)
         if (wasJumping && !jumping()) jumpRelease = true

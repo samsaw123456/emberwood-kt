@@ -44,8 +44,12 @@ jobs:
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
         run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh "$JAVA_HOME/bin/java" -Xms32m -Xmx128m -XX:ActiveProcessorCount=2 --enable-native-access=ALL-UNNAMED -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.PerformanceAudit
       - name: Profile the low-resource configuration on macOS
+        id: mac_performance
         if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
-        run: '"$JAVA_HOME/bin/java" -Xms32m -Xmx128m -XX:ActiveProcessorCount=2 --enable-native-access=ALL-UNNAMED -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.PerformanceAudit'
+        run: tools/run_mac_profile.sh build/performance
+      - name: Diagnose macOS presentation with Metal disabled
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.mac_performance.outcome == 'failure' }}
+        run: tools/run_mac_profile.sh build/performance-metal-disabled -Dsun.java2d.metal=false -Dperformance.soakSeconds=30
       - name: Audit controls through a real window on Linux
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
         run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh ./gradlew --no-daemon nativeAudit
@@ -71,6 +75,7 @@ jobs:
             build/audit-packaged/
             build/bundle-launch-macos/
             build/performance/
+            build/performance-metal-disabled/
             build/reports/tests/
             dist/*.deb
             dist/*.tar.gz

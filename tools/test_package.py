@@ -31,7 +31,13 @@ def main():
         )
         if mac:
             with (app / "Contents/Info.plist").open("rb") as stream:
-                executable = plistlib.load(stream)["CFBundleExecutable"]
+                metadata = plistlib.load(stream)
+            executable = metadata["CFBundleExecutable"]
+            assert (
+                metadata["CFBundleShortVersionString"]
+                == (ROOT / "VERSION").read_text().strip()
+            )
+            assert int(metadata["CFBundleVersion"].split(".")[0]) > 0
             launcher = app / "Contents/MacOS" / executable
         else:
             launcher = app / "bin/emberwood-kotlin"

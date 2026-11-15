@@ -3,11 +3,13 @@ package emberwood
 import com.sun.management.OperatingSystemMXBean
 import java.awt.Robot
 import java.awt.Toolkit
+import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.lang.management.ManagementFactory
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
@@ -47,6 +49,8 @@ object PerformanceAudit {
         private val keys = mutableSetOf<Int>()
         private val rows = mutableListOf<String>()
         private val failures = mutableListOf<String>()
+        private val deliveries = ConcurrentHashMap<Pair<Int, Boolean>, Long>()
+        private val coreTimings = mutableListOf<String>()
         private lateinit var window: JFrame
         private lateinit var panel: GamePanel
 
@@ -59,6 +63,13 @@ object PerformanceAudit {
                     val opened = openWindow(Settings(preferences))
                     window = opened.first
                     panel = opened.second
+                    panel.addKeyListener(
+                        object : KeyAdapter() {
+                            override fun keyPressed(event: KeyEvent) = delivered(event, true)
+
+                            override fun keyReleased(event: KeyEvent) = delivered(event, false)
+                        },
+                    )
                 }
                 robot.delay(1000)
                 screenshot("title-before")
@@ -134,6 +145,10 @@ object PerformanceAudit {
                         "Mean paint ms\tPeak sampled heap bytes\tPeak shots\tPeak particles\tResult\n" +
                         rows.joinToString("\n") + "\n",
                 )
+                Files.writeString(
+                    output.resolve("core-input-latency.tsv"),
+                    "Action\tMilliseconds\tResult\n" + coreTimings.joinToString("\n") + "\n",
+                )
                 preferences.toFile().deleteRecursively()
             }
             check(failures.isEmpty()) { failures.joinToString("\n") }
@@ -141,36 +156,78 @@ object PerformanceAudit {
         }
 
         private fun physicalCoreLoop() {
-            tap(KeyEvent.VK_ENTER)
+            coreTap(KeyEvent.VK_ENTER)
             robot.delay(150)
             val start = edt { panel.game.player.x }
-            desiredKeys(setOf(KeyEvent.VK_D))
+            coreKeys(setOf(KeyEvent.VK_D))
             robot.delay(420)
-            releaseKeys()
+            coreKeys(emptySet())
             screenshot("core-right")
             verify(edt { panel.game.player.x > start + 65 }, "Physical D input did not move right during core play")
-            desiredKeys(setOf(KeyEvent.VK_SPACE))
+            coreKeys(setOf(KeyEvent.VK_SPACE))
             robot.delay(130)
-            screenshot("core-jump")
             verify(edt { panel.game.player.y < 510 }, "Physical Space did not jump during core play")
-            releaseKeys()
-            robot.delay(650)
-            desiredKeys(setOf(KeyEvent.VK_A))
+            screenshot("core-jump")
+            coreKeys(emptySet())
+            awaitCore("Jump landing") { edt { panel.game.player.grounded } }
+            coreKeys(setOf(KeyEvent.VK_A))
             robot.delay(420)
-            releaseKeys()
-            robot.delay(150)
+            coreKeys(emptySet())
+            // Receipt and braking are separate: a delayed release cannot prove rest after a fixed sleep.
+            awaitCore("A release braking") { edt { abs(panel.game.player.vx) < 0.01 } }
             screenshot("core-left-release")
             verify(
-                edt { panel.game.player.x < start + 25 && abs(panel.game.player.vx) < 0.01 },
+                edt {
+                    panel.game.player.x > 40 && panel.game.player.x < start + 25 && abs(panel.game.player.vx) < 0.01
+                },
                 "Physical A/release did not recover to rest",
             )
-            tap(KeyEvent.VK_R)
-            robot.delay(950)
+            coreTap(KeyEvent.VK_R)
+            awaitCore("Retry recovery") {
+                edt { panel.game.deaths == 1 && panel.game.player.grounded && panel.game.state == GameState.PLAYING }
+            }
             screenshot("core-retry")
             verify(edt { panel.game.deaths == 1 && panel.game.player.grounded }, "Physical R did not complete a retry")
-            tap(KeyEvent.VK_ESCAPE)
+            coreTap(KeyEvent.VK_ESCAPE)
             screenshot("pause-before")
             verify(edt { panel.game.state == GameState.PAUSED }, "Physical Escape did not pause")
+        }
+
+        private fun delivered(
+            event: KeyEvent,
+            down: Boolean,
+        ) {
+            val binding = event.keyCode to down
+            deliveries[binding] = (deliveries[binding] ?: 0) + 1
+        }
+
+        private fun coreKeys(desired: Set<Int>) {
+            val changed = (keys - desired).map { it to false } + (desired - keys).map { it to true }
+            val before = changed.associateWith { deliveries[it] ?: 0 }
+            val sent = System.nanoTime()
+            desiredKeys(desired)
+            for (binding in changed) {
+                val label = "${KeyEvent.getKeyText(binding.first)} ${if (binding.second) "press" else "release"} receipt"
+                awaitCore(label, sent) { (deliveries[binding] ?: 0) > before.getValue(binding) }
+            }
+        }
+
+        private fun coreTap(key: Int) {
+            coreKeys(setOf(key))
+            robot.delay(35)
+            coreKeys(emptySet())
+            robot.delay(70)
+        }
+
+        private fun awaitCore(
+            description: String,
+            started: Long = System.nanoTime(),
+            ready: () -> Boolean,
+        ) {
+            while (!ready() && System.nanoTime() - started < 2_000_000_000L) robot.delay(5)
+            val passed = ready()
+            coreTimings.add("$description\t${decimal((System.nanoTime() - started) / 1e6)}\t${if (passed) "PASS" else "FAIL"}")
+            verify(passed, "$description did not complete within two seconds")
         }
 
         private fun scene(

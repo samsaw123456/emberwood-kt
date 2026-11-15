@@ -454,7 +454,7 @@ internal class RouteDriver(
 
     private fun tick(targetX: Double? = null) {
         val distance = if (targetX == null) 0.0 else targetX - game.player.x
-        val stop = max(4.0, abs(game.player.vx) * 0.06)
+        val stop = max(4.0, abs(game.player.vx) * if (nativeTiming) 0.12 else 0.06)
         val input =
             InputFrame(
                 left = distance < -stop,
