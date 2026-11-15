@@ -1,6 +1,5 @@
 package emberwood
 
-import java.awt.Graphics
 import java.awt.RenderingHints
 import java.awt.Robot
 import java.awt.event.InputEvent
@@ -13,7 +12,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
-import javax.swing.JComponent
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
 import kotlin.math.abs
@@ -35,6 +33,7 @@ private class NativeAudit(
     private val rows = mutableListOf<String>()
     private val evidence = mutableListOf<String>()
     private val pendingImages = mutableListOf<Pair<String, BufferedImage>>()
+    private val rejectedImages = linkedMapOf<String, BufferedImage>()
     private val presentationTimings = mutableListOf<String>()
     private val presentationStages = mutableListOf<String>()
     private val jumpObservations = mutableListOf<String>()
@@ -105,18 +104,7 @@ private class NativeAudit(
                 val pair = openWindow(Settings(preferences))
                 frame = pair.first
                 panel = pair.second
-                frame.glassPane =
-                    object : JComponent() {
-                        override fun contains(
-                            x: Int,
-                            y: Int,
-                        ) = false
-
-                        override fun paintComponent(graphics: Graphics) {
-                            PresentationMarker.paint(graphics, presentationNonce)
-                        }
-                    }
-                frame.glassPane.isVisible = true
+                panel.border = PresentationMarker.border { presentationNonce }
                 panel.addKeyListener(
                     object : KeyAdapter() {
                         override fun keyPressed(event: KeyEvent) = delivered(event, true)
@@ -335,7 +323,7 @@ private class NativeAudit(
         edt {
             observe()
             presentationNonce = nonce
-            frame.rootPane.paintImmediately(0, 0, frame.rootPane.width, frame.rootPane.height)
+            panel.paintImmediately(0, 0, panel.width, panel.height)
         }
         stage("edt-paint", started)
         val syncStarted = System.nanoTime()
@@ -354,8 +342,8 @@ private class NativeAudit(
             }
         stage("edt-bounds", boundsStarted)
 
-        // Cocoa may return the previous compositor frame after paintImmediately. A marker in the
-        // same window proves presentation; it never intercepts input or changes game state.
+        // Cocoa may return the previous compositor frame after paintImmediately. The zero-inset
+        // border repaints with the game itself; a separate glass pane could retain an older nonce.
         var attempt = 0
 
         fun capture(): BufferedImage {
@@ -366,11 +354,21 @@ private class NativeAudit(
                 } else {
                     checkNotNull(robot).createScreenCapture(bounds)
                 }
+            val matched = PresentationMarker.matches(image, nonce)
+            val retained =
+                if (matched) {
+                    null
+                } else {
+                    val prefix = "rejected-%04d".format(sequence)
+                    rejectedImages.putIfAbsent("$prefix-first.png", image)
+                    rejectedImages["$prefix-latest.png"] = image
+                    "$prefix-latest.png"
+                }
             stage(
                 "capture-read",
                 captureStarted,
                 ",\"attempt\":${++attempt},\"observedNonce\":${PresentationMarker.readNonce(image)}," +
-                    "\"matched\":${PresentationMarker.matches(image, nonce)}",
+                    "\"matched\":$matched,\"retainedLatest\":${retained?.let(NativeAuditTools::quote) ?: "null"}",
             )
             return image
         }
@@ -412,6 +410,8 @@ private class NativeAudit(
     private fun flushImages() {
         for ((name, image) in pendingImages) check(ImageIO.write(image, "png", output.resolve(name).toFile()))
         pendingImages.clear()
+        for ((name, image) in rejectedImages) check(ImageIO.write(image, "png", output.resolve(name).toFile()))
+        rejectedImages.clear()
     }
 
     private fun delivered(

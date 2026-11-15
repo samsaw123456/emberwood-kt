@@ -1,8 +1,12 @@
 package emberwood
 
 import java.awt.Color
+import java.awt.Graphics
+import java.awt.Insets
 import java.awt.image.BufferedImage
 import javax.imageio.ImageIO
+import javax.swing.JPanel
+import javax.swing.SwingUtilities
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -10,6 +14,43 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class PresentationMarkerTest {
+    @Test
+    fun markerRepaintsAfterTheActualComponentWithoutChangingContentInsets() {
+        SwingUtilities.invokeAndWait {
+            var nonce = 7
+            var paintColor = Color.RED
+            var componentPaints = 0
+            val panel =
+                object : JPanel() {
+                    override fun paintComponent(graphics: Graphics) {
+                        componentPaints++
+                        graphics.color = paintColor
+                        graphics.fillRect(0, 0, width, height)
+                    }
+                }
+            panel.setSize(64, 48)
+            panel.border = PresentationMarker.border { nonce }
+            assertEquals(Insets(0, 0, 0, 0), panel.insets)
+            val image = BufferedImage(64, 48, BufferedImage.TYPE_INT_RGB)
+            val graphics = image.createGraphics()
+            try {
+                panel.paint(graphics)
+                assertTrue(PresentationMarker.matches(image, 7))
+                assertEquals(Color.RED.rgb, image.getRGB(40, 30))
+                nonce = 8
+                paintColor = Color.BLUE
+                panel.paint(graphics)
+                assertEquals(2, componentPaints)
+                assertTrue(PresentationMarker.matches(image, 8))
+                assertFalse(PresentationMarker.matches(image, 7))
+                assertEquals(Color.BLUE.rgb, image.getRGB(40, 30))
+                assertEquals(Insets(0, 0, 0, 0), panel.insets)
+            } finally {
+                graphics.dispose()
+            }
+        }
+    }
+
     @Test
     fun intelCapturedColorShiftCannotRejectMonochromeFrameNonce() {
         val captured = ImageIO.read(checkNotNull(javaClass.getResource("/native-audit/intel-presentation-marker.png")))
