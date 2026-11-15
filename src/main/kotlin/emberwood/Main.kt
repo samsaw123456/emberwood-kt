@@ -308,11 +308,15 @@ class GamePanel(
     }
 
     fun loseFocus() {
+        hoverId = null
+        pressedId = null
+        cursor = java.awt.Cursor.getDefaultCursor()
         clearInput()
         physical.clear()
         game.pause()
         audio.stop()
         transitioned()
+        repaint()
     }
 
     private fun transitioned() {

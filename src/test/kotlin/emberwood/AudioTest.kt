@@ -13,6 +13,60 @@ import kotlin.test.assertTrue
 
 class AudioTest {
     @Test
+    fun muteStillReturnsAndClosesAudioWhenTheOutputResetFails() {
+        val writing = CountDownLatch(1)
+        val closed = CountDownLatch(1)
+        val device =
+            Proxy.newProxyInstance(
+                SourceDataLine::class.java.classLoader,
+                arrayOf(SourceDataLine::class.java),
+            ) { _, method, args ->
+                when (method.name) {
+                    "open", "start" -> null
+                    "write" -> {
+                        writing.countDown()
+                        check(closed.await(5, TimeUnit.SECONDS))
+                        args[2]
+                    }
+                    "flush" -> error("Output reset failed")
+                    "close" -> {
+                        closed.countDown()
+                        null
+                    }
+                    "isOpen", "isRunning" -> closed.count != 0L
+                    else -> error("Unexpected audio operation: ${method.name}")
+                }
+            } as SourceDataLine
+        val audio = Audio { device }
+        try {
+            assertTrue(writing.await(2, TimeUnit.SECONDS))
+            val mute = FutureTask { audio.muted = true }
+            Thread(mute, "audio-mute-regression").apply { isDaemon = true }.start()
+            mute.get(2, TimeUnit.SECONDS)
+            assertTrue(audio.muted)
+            assertEquals("Output reset failed", audio.unavailable)
+            assertTrue(closed.await(1, TimeUnit.SECONDS))
+            assertFalse(audio.ready)
+        } finally {
+            closed.countDown()
+            audio.close()
+        }
+    }
+
+    @Test
+    fun aMissingNativeOutputLibraryResolvesAsUnavailable() {
+        val audio = Audio { throw UnsatisfiedLinkError("Output library unavailable") }
+        try {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+            while (audio.unavailable == null && System.nanoTime() < deadline) Thread.sleep(5)
+            assertEquals("Output library unavailable", audio.unavailable)
+            assertFalse(audio.ready)
+        } finally {
+            audio.close()
+        }
+    }
+
+    @Test
     fun closingAnOpenDeviceDoesNotBlockOnItsNativeShutdown() {
         val writing = CountDownLatch(1)
         val closingDevice = CountDownLatch(1)

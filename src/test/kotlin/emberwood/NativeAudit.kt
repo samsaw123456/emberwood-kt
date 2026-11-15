@@ -107,6 +107,7 @@ private class NativeAudit(
             disabledCases()
             mouseCases()
             focusCases()
+            mouseFocusCase()
             resizeAndClose(preferences)
             println(
                 "Native audit: ${rows.size} cases, $failures failures. " +
@@ -400,21 +401,7 @@ private class NativeAudit(
         button: Int = InputEvent.BUTTON1_DOWN_MASK,
         hold: Boolean = false,
     ) {
-        val point =
-            edt {
-                panel.rebuildActions()
-                val bounds = panel.actions.single { it.id == id }.bounds
-                val scale = minOf(panel.width / 1152.0, panel.height / 648.0)
-                val p = panel.locationOnScreen
-                java.awt.Point(
-                    (p.x + (panel.width - 1152 * scale) / 2 + bounds.centerX * scale).toInt(),
-                    (
-                        p.y +
-                            (panel.height - 648 * scale) / 2 +
-                            bounds.centerY * scale
-                    ).toInt(),
-                )
-            }
+        val point = actionPoint(id)
         robot.mouseMove(point.x, point.y)
         robot.mousePress(button)
         if (hold) {
@@ -424,6 +411,22 @@ private class NativeAudit(
         robot.mouseRelease(button)
         robot.delay(70)
     }
+
+    private fun actionPoint(id: String): java.awt.Point =
+        edt {
+            panel.rebuildActions()
+            val bounds = panel.actions.single { it.id == id }.bounds
+            val scale = minOf(panel.width / 1152.0, panel.height / 648.0)
+            val p = panel.locationOnScreen
+            java.awt.Point(
+                (p.x + (panel.width - 1152 * scale) / 2 + bounds.centerX * scale).toInt(),
+                (
+                    p.y +
+                        (panel.height - 648 * scale) / 2 +
+                        bounds.centerY * scale
+                ).toInt(),
+            )
+        }
 
     private fun focus(id: String) {
         repeat(32) {
@@ -1296,6 +1299,60 @@ private class NativeAudit(
                     },
                 )
             }
+        }
+    }
+
+    private fun mouseFocusCase() {
+        case(
+            "Release mouse left while unfocused",
+            GameState.TITLE,
+            "Mouse hold toggles once; focus loss clears hover/pressed styling; outside release cannot reactivate",
+        ) {
+            val blank =
+                edt {
+                    val origin = panel.locationOnScreen
+                    java.awt.Point(origin.x + panel.width - 30, origin.y + 30)
+                }
+            robot.mouseMove(blank.x, blank.y)
+            val before = snap("mouse-focus-before").getRGB(366, 327)
+            val muted = edt { panel.settings.muted }
+            val point = actionPoint("sound")
+            var other: JFrame? = null
+            var held = true
+            robot.mouseMove(point.x, point.y)
+            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+            try {
+                snap("mouse-focus-held")
+                check(edt { panel.settings.muted != muted })
+                other =
+                    edt {
+                        JFrame("Emberwood mouse focus audit").apply {
+                            setSize(240, 160)
+                            setLocation(20, 20)
+                            isVisible = true
+                            toFront()
+                            requestFocus()
+                        }
+                    }
+                await("Mouse-release target receives focus") { edt { other.isFocused } }
+                robot.mouseMove(blank.x, blank.y)
+                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+                held = false
+                snap("mouse-released-unfocused")
+            } finally {
+                if (held) robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+                edt {
+                    other?.dispose()
+                    frame.toFront()
+                    panel.requestFocusInWindow()
+                }
+            }
+            await("Game regains focus after mouse release") { edt { frame.isFocused && panel.isFocusOwner } }
+            val after = snap("mouse-focus-recovered").getRGB(366, 327)
+            check(after == before) { "A button retains stale hover/pressed styling after the pointer leaves during focus loss" }
+            check(edt { panel.cursor.type == java.awt.Cursor.DEFAULT_CURSOR && panel.settings.muted != muted })
+            click("sound")
+            check(edt { panel.settings.muted == muted && panel.game.state == GameState.TITLE })
         }
     }
 

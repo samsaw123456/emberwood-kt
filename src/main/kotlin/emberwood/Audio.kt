@@ -11,7 +11,7 @@ import kotlin.math.sin
 
 /** Original Emberwood tones, mixed into one bounded, quiet desktop output stream. */
 class Audio(
-    private val createLine: (AudioFormat) -> SourceDataLine = { AudioSystem.getSourceDataLine(it) },
+    private val createLine: ((AudioFormat) -> SourceDataLine)? = null,
 ) : AutoCloseable {
     private data class Voice(
         val pcm: ShortArray,
@@ -48,7 +48,7 @@ class Audio(
     @Volatile var unavailable: String? = null
         private set
 
-    @Volatile private var line: SourceDataLine? = null
+    @Volatile private var line: AudioOutput? = null
     val ready: Boolean
         get() {
             val device = line
@@ -72,14 +72,27 @@ class Audio(
 
     fun stop() {
         synchronized(voices) { voices.clear() }
-        line?.flush()
+        try {
+            line?.flush()
+        } catch (error: Exception) {
+            reportUnavailable(error)
+            close()
+        } catch (error: LinkageError) {
+            reportUnavailable(error)
+            close()
+        }
     }
 
     private fun output() {
-        var device: SourceDataLine? = null
+        var device: AudioOutput? = null
         try {
             val format = AudioFormat(22050f, 16, 1, true, false)
-            device = createLine(format)
+            device =
+                when {
+                    createLine != null -> JavaSoundOutput(createLine(format))
+                    System.getProperty("os.name").startsWith("Mac") -> MacAudioOutput()
+                    else -> JavaSoundOutput(AudioSystem.getSourceDataLine(format))
+                }
             device.open(format, 4096)
             if (!running.get()) return
             device.start()
@@ -103,13 +116,19 @@ class Audio(
                 device.write(bytes, 0, bytes.size)
             }
         } catch (error: Exception) {
-            if (running.get()) {
-                unavailable = error.message ?: error.javaClass.simpleName
-                System.err.println("Audio unavailable: $unavailable")
-            }
+            reportUnavailable(error)
+        } catch (error: LinkageError) {
+            reportUnavailable(error)
         } finally {
             line = null
             device?.close()
+        }
+    }
+
+    private fun reportUnavailable(error: Throwable) {
+        if (running.get()) {
+            unavailable = error.message ?: error.javaClass.simpleName
+            System.err.println("Audio unavailable: $unavailable")
         }
     }
 

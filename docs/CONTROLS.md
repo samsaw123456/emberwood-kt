@@ -8,7 +8,7 @@ campaign does not mark physical controls passed.
 The native audit injects OS input and captures before/during/after window frames.
 Its automatic assertions are followed by inspection of every referenced frame.
 Source results live in `build/audit/controls.tsv`; bundled-runtime results live
-in `build/audit-packaged/controls.tsv`. The complete inventory contains 279 cases.
+in `build/audit-packaged/controls.tsv`. The complete inventory contains 280 cases.
 Automatic assertions, visual inspection and audio-output verification are
 recorded separately in the coverage TSV and [verification record](VERIFICATION.md).
 A failed or unfinished final-build rerun does not inherit a previous build's pass.
@@ -41,6 +41,7 @@ audio remains unverified by the separate output audit.
 | A+D / opposing arrows | Playing: cancel movement predictably |
 | Jump+dash, turn+shoot, held/repeated inputs | Playing: obey priority, facing, cooldown; recover on release |
 | Release while focus lost, then return | Playing → paused; no stuck action or automatic resume |
+| Mouse release while focus lost | Title: toggle once, clear hover/pressed styling, no activation on return |
 | Close window / OS quit | Exit and close audio; saved preferences remain |
 
 Camera tracking is intentional: in the interior of a level, Gentle motion keeps

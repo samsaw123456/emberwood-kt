@@ -18,7 +18,10 @@ application {
     mainClass.set("emberwood.MainKt")
     applicationDefaultJvmArgs = listOf("-Xms32m", "-Xmx256m", "--enable-native-access=ALL-UNNAMED")
 }
-tasks.test { useJUnitPlatform() }
+tasks.test {
+    useJUnitPlatform()
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
+}
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     compilerOptions { allWarningsAsErrors.set(true) }
 }

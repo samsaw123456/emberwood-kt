@@ -4,6 +4,7 @@ import argparse
 import ctypes
 import hashlib
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -110,6 +111,44 @@ def default_output():
     }
 
 
+def verify_output_backend(java, jar, tests, output, label, sdk_layout):
+    command = [
+        java,
+        "--enable-native-access=ALL-UNNAMED",
+        "-cp",
+        os.pathsep.join([str(jar), str(tests)]),
+        "emberwood.MacAudioOutputProbe",
+    ]
+    with (output / f"{label}-layout.log").open("w") as log:
+        layout = subprocess.run(
+            [*command, "--layouts"],
+            stdout=subprocess.PIPE,
+            stderr=log,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+    actual = json.loads(layout.stdout)
+    comparison = {
+        "sdk": sdk_layout,
+        "jvm": actual,
+        "result": "PASS" if actual == sdk_layout else "FAIL",
+    }
+    (output / f"{label}-abi.json").write_text(json.dumps(comparison, indent=2) + "\n")
+    if actual != sdk_layout:
+        raise RuntimeError(
+            f"{label} FFM layout differs from the installed SDK; no playback or input attempted"
+        )
+    with (output / f"{label}-lifecycle.log").open("w") as log:
+        subprocess.run(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=True,
+            timeout=30,
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -120,6 +159,31 @@ def main():
         parser.error("Run this diagnostic on macOS")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    layout_helper = output / "mac-audio-layout"
+    with (output / "sdk-layout-compile.log").open("w") as log:
+        subprocess.run(
+            [
+                "xcrun",
+                "clang",
+                "-std=c11",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                ROOT / "tools/mac_audio_layout.c",
+                "-framework",
+                "AudioToolbox",
+                "-o",
+                layout_helper,
+            ],
+            check=True,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            timeout=60,
+        )
+    sdk_layout = json.loads(
+        subprocess.check_output([layout_helper], text=True, timeout=10)
+    )
+    (output / "sdk-layout.json").write_text(json.dumps(sdk_layout, indent=2) + "\n")
     selected = default_output()
     (output / "output-device.json").write_text(json.dumps(selected, indent=2) + "\n")
     version = (ROOT / "VERSION").read_text().strip()
@@ -146,6 +210,29 @@ def main():
         (output / "output-device.json").write_text(
             json.dumps(selected, indent=2) + "\n"
         )
+        tests = ROOT / "build/classes/kotlin/test"
+        for label, executable, game_jar in (
+            (
+                "source",
+                Path(os.environ["JAVA_HOME"]) / "bin/java",
+                ROOT / "build/libs/emberwood-kotlin.jar",
+            ),
+            ("packaged", runtime, jar),
+        ):
+            key = f"{label}-abi-lifecycle"
+            results[key] = "INCOMPLETE"
+            try:
+                verify_output_backend(
+                    executable, game_jar, tests, output, label, sdk_layout
+                )
+                results[key] = "PASS"
+            except Exception:
+                results[key] = "FAIL"
+                raise
+            finally:
+                (output / "results.json").write_text(
+                    json.dumps(results, indent=2) + "\n"
+                )
         commands = {
             "bundle-foreground": [
                 sys.executable,
