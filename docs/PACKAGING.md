@@ -1,11 +1,12 @@
 # Native packages and toolchains
 
 The current candidate JAR is
-`375ae22702bfc62711180138abc3b01ef309339cd636cdfa0d170b8b04e0c0fd`.
-It [failed macOS startup on both architectures](https://github.com/samsaw123456/emberwood-kt/actions/runs/43745233648)
-before any control cases ran and cannot ship. The `7d9668ed` evidence and staged
-archives below are retained baseline results, not verification of this candidate.
-Publication remains pending a passing build and the required native reviews.
+`ae9686cb8387d5c9f61f4a6cb73d4f9a99803fe6e93e2ce519d495d59b9bdb8c`.
+Its required final native reviews remain in progress. The prior `375ae227`
+candidate [failed macOS startup on both architectures](https://github.com/samsaw123456/emberwood-kt/actions/runs/43745233648)
+and was not shipped. The `7d9668ed` evidence and staged archives below are retained
+baseline results, not verification of the current candidate. Publication remains
+pending a passing build and the required native reviews.
 
 The source launcher provisions Temurin **25.0.5+8** into a private cache, with
 four platform/architecture URLs and SHA-256 hashes pinned in
@@ -44,6 +45,23 @@ packaging-helper, icon and version changes invalidate the relevant cache. A
 failed or interrupted build is never published as a finished cache entry, and
 unmarked directories are not replaced. Linux keeps its direct private-Java
 launcher. The source route needs no Python or global developer-tool installation.
+
+The shared Mac builder sets `apple.awt.application.name=Emberwood Kotlin` for
+the native About, Hide and Quit labels. The pinned Java launcher says to
+“use it if set”; it otherwise substitutes the main class name.
+[OpenJDK 25 launcher source](https://github.com/openjdk/jdk25u/blob/jdk-25.0.5%2B8/src/java.base/macosx/native/libjli/java_md_macosx.m#L778-L808)
+An explicit `-Xdock:name` would take precedence, but this recipe adds no competing
+name option. Inner quotes preserve the space through `jpackage`'s option parser;
+the builder checks the generated configuration before signing. A real pinned
+`jpackage` fixture verified the complete property and executed its native launcher.
+Source and release recipe fixtures pass. The actual packaged application then
+passed the physical menu-label check on both Mac architectures in
+[run 43750035990](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750035990).
+About, Hide and Quit display Emberwood Kotlin; Escape closes the menu. After
+physical Command-Q, the owned PID and window are gone, modifiers are released,
+no cleanup signal is sent and the `open -W` launcher exits zero. This route does
+not retain a numeric JVM exit status. The targeted check does not replace the
+final complete inventory.
 
 `tools/sign_mac_app.sh` signs only the outer Mac app with Hardened Runtime and
 exactly two Boolean entitlements: JIT and library-validation exceptions for the
@@ -118,11 +136,56 @@ so that container proof applies to the current packages. Receipts are under
 `build/ci-dependencies-linux-{x64,arm64}/dependency-container/` and
 `build/portable-linux-dependency-review/`.
 
-## Current Linux package and launcher evidence
+## Current candidate package evidence
+
+The current `ae9686cb` Linux packages from
+[run 43747640143](https://github.com/samsaw123456/emberwood-kt/actions/runs/43747640143)
+passed source and bundled control inventories on both architectures. All four
+inventories have 280 cases and 1,214 referenced frames, with disjoint visual
+review journals. The native twenty-level campaign ran on Linux x86-64.
+Their complete application entries match the corresponding
+[audio and installer run 43747641897](https://github.com/samsaw123456/emberwood-kt/actions/runs/43747641897)
+in bytes, symlink targets and modes. That separate run verifies installation,
+upgrade/removal, fourteen sound-output cases per route and ordinary Main launch,
+movement, jump, pause and physical Alt+F4 on both architectures. The four original
+audio-and-installer archives and checksum sidecars are staged unchanged in
+`build/release-ae9686cb/assets/`; `build/release-ae9686cb/linux-staging.json`
+records the selection. No release has been published. Exact comparisons are in
+`build/ci-final-ae9686cb-linux-{x64,arm64}/audio-package-identity.json` and
+`package-review.json`. Audio and actual-game review journals remain under
+`build/ci-audio-ae9686cb-linux-{x64,arm64}/`.
+
+The installed user's separate app and actual Zed Play task also run this current
+JAR. The installed app tree is
+`15be72f883ae1587d5843b91f0a15da9dda1274f636b2efdf38dad8bbec7e17f`.
+It used its bundled runtime with invalid global Java values and a child-only
+rule denying IPv4/IPv6 sockets. Root inspected nine full-size installed-app
+originals and eleven full-size Zed originals through movement, jump and pause.
+Physical Alt+F4 removed the owned PID and window; these routes do not retain a
+numeric JVM exit status. The local reviews are recorded in
+`build/installed-user-audit-ae9686cb/review.json` and
+`build/zed-audit-ae9686cb/review.json`; the original Emberwood launchers remain.
+
+The current Mac application-name fix changes only the launcher configuration and
+its outer signature resources relative to the prior same-JAR bundles. Independent
+inspection of all 119 file/symlink entries confirms unchanged game, runtime,
+metadata and 2,107 original assets. Both new ordinary-Main checks in
+[run 43750035990](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750035990)
+passed bounded movement, the physical application menu and Command-Q. The three
+menu desktops and final clear desktop were independently inspected per
+architecture. A separate post-game native probe confirms that only Services is
+removed and all eight sibling identities, actions, targets and shortcuts remain
+unchanged. Archive, signature-log and menu review receipts are in
+`build/ci-main-name-budget-ae9686cb-macos-{arm,intel}/`. These are targeted checks;
+the final source-cache equality, profiles, full controls and audio checks in
+[run 43750771895](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750771895)
+are still pending independent review.
+
+## Retained Linux baseline package and launcher evidence
 
 The retained Linux baseline game JAR is
 `7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
-The four Linux release candidates come unchanged from
+The four retained Linux baseline archives came unchanged from
 [run 43725301448](https://github.com/samsaw123456/emberwood-kt/actions/runs/43725301448).
 Both native architectures passed actual per-user installation, bundled Java
 25.0.5 execution, desktop registration, replacement and removal while retaining
@@ -133,7 +196,7 @@ file contents, symlink targets and modes.
 
 The app trees also match their respective full-control builds from
 [run 43725299181](https://github.com/samsaw123456/emberwood-kt/actions/runs/43725299181)
-exactly. This ties the selected release files to the final source and bundled
+exactly. This ties those historical files to the corresponding source and bundled
 280-case inventories. All referenced frames were reviewed. Actual source/bundled
 sound and real-main launch, movement, jump, pause and physical Alt+F4 were checked
 separately on both architectures. See [controls](CONTROLS.md) and
@@ -143,12 +206,13 @@ Archive and native-install receipts are in
 `build/ci-audio-jump-fixed-linux-{x64,arm64}/package-review.json` and
 `native-job.log`; cross-run app comparisons are in
 `build/ci-final-7d9668ed-linux-{x64,arm64}/cross-run-release-identity.json`.
-The release manifest records each exact archive and origin. Selection does not
-rebuild or rewrite an archive.
+The retained baseline manifest records each exact archive and origin. Those
+archives were not rebuilt or rewritten during selection.
 
-The current user's separate **Emberwood Kotlin** app was upgraded to this JAR at
-`~/.local/share/emberwood-kotlin/app`. The original Emberwood launcher remains
-unchanged. An actual desktop-registry launch used invalid global Java variables
+The user's separate **Emberwood Kotlin** app was previously upgraded to the
+retained `7d9668ed` baseline JAR at `~/.local/share/emberwood-kotlin/app`.
+The original Emberwood launcher remained unchanged. That desktop-registry launch
+used invalid global Java variables
 and a child-only rule denying internet sockets. Start, held/released movement,
 jump/landing, pause and physical Alt+F4 were inspected in all nine original
 frames. The process used the installed private runtime; closing removed the
@@ -156,7 +220,7 @@ window and process. Evidence is in `build/installed-user-audit-7d9668ed/`.
 The actual Zed project task was also loaded and played through movement, jump,
 pause and close; see `build/zed-audit-7d9668ed/result.json`.
 
-## Current Mac package and launcher evidence
+## Retained Mac baseline package and launcher evidence
 
 Both architectures in [run 43725299181](https://github.com/samsaw123456/emberwood-kt/actions/runs/43725299181)
 passed installation, upgrade, removal, native signature validation and actual

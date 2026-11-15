@@ -1,116 +1,96 @@
 # Emberwood Kotlin 0.1.0 verification record
 
-These six archives are a retained historical baseline, **not release candidates**.
-A later input-order regression found a real release-then-press bug within one
-simulation step. Its correction requires fresh game packages and final control,
-campaign, performance and audio verification. This record will be replaced with
-the new package identities and observed results before publication; a dispatched
-workflow is not a passing test.
+Publication is pending the complete macOS verification and rendered review.
+The four Linux downloads below are staged locally. No tag or release has been
+published. Earlier packages are historical evidence, not candidates for this release.
 
-## Retained baseline SHA-256 values
+The game JAR is
+`ae9686cb8387d5c9f61f4a6cb73d4f9a99803fe6e93e2ce519d495d59b9bdb8c`.
+Its 67 Kotlin/JVM tests pass. The current installer and diagnostic suite passes
+206 tests locally, with two Mac SDK tests deferred to the native Mac jobs.
+Ruff, ShellCheck, Kotlin formatting and the build pass. All 2,107 migrated asset
+files match the original Emberwood v1.3.1 artwork byte for byte.
+
+## Downloads and identity
+
+The four Linux files come unchanged from
+[run 43747641897](https://github.com/samsaw123456/emberwood-kt/actions/runs/43747641897).
+Their complete app contents match the source/bundled control and performance
+packages from [run 43747640143](https://github.com/samsaw123456/emberwood-kt/actions/runs/43747640143),
+including file bytes, symlink targets and modes. The portable and Debian app
+contents also match for each architecture.
 
 ```text
-c096a1ace7b8a59b3d3fa2ff01c2f0007eddb6898ea55a227e9dd697793d75f6  emberwood-kotlin-0.1.0-linux-aarch64.tar.gz
-c1813f2dd96678ed1ad3c73dd8ed229673f901e7d28eb2b28103cc87ba1a77b9  emberwood-kotlin-0.1.0-linux-x86_64.tar.gz
-72549db75488b1f4060d4b8e8ba80ade55ad7f769c15148a9f4e532700c1226a  emberwood-kotlin-0.1.0-macos-aarch64.zip
-251bf7b922c7bb576964d55d5689d791462bc52b724466bdd7c46e3b97f8b621  emberwood-kotlin-0.1.0-macos-x86_64.zip
-f196ac11cdae0c20731ba9fb7d0489a97c1299e929bb8938bdc0ed0b7e6a10f1  emberwood-kotlin_0.1.0_amd64.deb
-363d733349f3ecc4ddc6a82025aa5c41701161a1bd30201f28704b85b6347f25  emberwood-kotlin_0.1.0_arm64.deb
+c0d66073668d8b2ae64c77a2d16090486df87102c0c48795f7b4f3a6288a8046  emberwood-kotlin-0.1.0-linux-aarch64.tar.gz
+f1074c6bf66f74a89b346aaa83f6a28d8369db9cc0fb78310ec86f0c424ec99f  emberwood-kotlin-0.1.0-linux-x86_64.tar.gz
+32fd8cc88fba33e957cde8073fb0104e0c487abe8b0bbcab275af6c9052b51ab  emberwood-kotlin_0.1.0_amd64.deb
+222235857a5c08785330648b5b4ab6ac9a05fbf12dcca9ae996a1a9408b73939  emberwood-kotlin_0.1.0_arm64.deb
 ```
-
-The four Linux files are unchanged artifacts from
-[run 43719750356](https://github.com/samsaw123456/emberwood-kt/actions/runs/43719750356)
-at commit `2564e3cb8f61015fb3cfd081d80f3d2da91cf28b`.
-The Mac apps originate from
-[run 43715704373](https://github.com/samsaw123456/emberwood-kt/actions/runs/43715704373)
-at `8f0b905`. Their ZIP copies refresh only the top-level README. Every other
-entry's uncompressed bytes, symlink target, mode, timestamps, comments, extra
-fields and recorded platform/version attributes match the original. ZIP storage
-may differ: compression, offsets and 107 data-descriptor flags per archive.
-The extracted apps and their signature contents are unchanged.
-
-## Identity across the checks
-
-All six downloads contain the same game JAR:
-`88283267eefaf417da4965a1248c1b70b9188effd71f6ee3f69cc2c1911e5bc1`.
-All 2,107 imported asset files match the original migrated assets. The dependency
-recovery change affects the Linux launch/install scripts; it does not change the
-game or runtime used by the completed control and performance audits.
 
 | Content | Tree SHA-256 |
 | --- | --- |
+| Linux x86-64 complete app | `15be72f883ae1587d5843b91f0a15da9dda1274f636b2efdf38dad8bbec7e17f` |
+| Linux ARM64 complete app | `63be67ccf903faec6c0f7825ff19d1a1b2fd7766a68c2e1a1eea8ae87f9dd8f5` |
 | Linux x86-64 runtime | `a72adb7142f5e7dcaefa535143074f9a8848f42f83ddc4f1b138083235f8c8a4` |
 | Linux ARM64 runtime | `22de4a0d41be8e7324cb1c82002832f726a575c47590331360bc6ef373dc4a8e` |
-| Apple Silicon complete signed app | `cfa85fd9f850eb028e15734907c84d3db8f3970a6425b11fbe8a4cbbeff2022b` |
-| Intel Mac complete signed app | `2df70a9f30706428f1f3ae86b4e315a17ad219c679bc21fe5c7cf5446dd4d4ab` |
 
 Tree fingerprints use [package_integrity.py](../tools/package_integrity.py):
-relative paths, file contents and symlink targets; modes were compared separately.
-The table names each hash root. Native Mac audit `original_runtime_sha256` covers
-`Emberwood Kotlin.app/Contents/runtime`, including its outer bundle metadata;
-older package-review `runtime_sha256` covers only `Contents/runtime/Contents/Home`.
-Those different roots produce different digests even for the same unchanged app.
-The complete 119-entry app comparison is the decisive cross-run identity check.
-Each Linux portable app matches its Debian package app tree, including modes.
-Every runtime entry also matches its architecture's full-control baseline in
-[run 43712421975](https://github.com/samsaw123456/emberwood-kt/actions/runs/43712421975).
-On both Macs, the complete packaged app tree matches the cached source app used
-for the actual offline source launch and performance profile.
+relative paths, file bytes and symlink targets. Modes are compared separately.
+Exact app identity connects the independent tests; an older runnable JAR's pass
+is never silently transferred to a changed game.
 
-The later [uninstrumented audio run 43721920267](https://github.com/samsaw123456/emberwood-kt/actions/runs/43721920267)
-retains original ZIPs whose 119 app entries per architecture match these same
-apps exactly, including configuration, signature contents, modes and symlink
-targets. Its before/after original-app fingerprints are also unchanged.
+## Observed results
 
-The latest Intel native control retry is
-[run 43721802571](https://github.com/samsaw123456/emberwood-kt/actions/runs/43721802571).
-Its retained original ZIP matches all 119 Intel app entries above, including
-modes, symlink targets, configuration and signature contents; the before/after
-app fingerprints are unchanged. That identity proof does not turn its failed
-control result into a pass: it completed 280 cases with three failed observations.
-A successful corrected audit and complete rendered review remain required.
+- Linux source and bundled apps on both architectures complete 280 physical
+  control cases each. Every one of the 1,214 referenced frames per inventory has
+  been visually inspected. The final aggregation verifies disjoint review
+  partitions and original hashes. Actual PCM and physical close are separate checks.
+- The current game completes a real native keyboard campaign through all twenty
+  levels, six guardians and sixty acorns: 08:19, one natural failure/retry,
+  201/378 gems and all twenty hidden fireflies. All 55 retained frames were
+  inspected. This is progression evidence, not a substitute for the control audit.
+- All four Linux source/bundled audio routes pass fourteen physical cases each:
+  56 cases and 336 game-only WAVs. Ordinary Main launch, movement, jumping,
+  landing, pause and physical Alt+F4 also pass on each route. These recordings
+  verify virtual output PCM; they do not claim a physical speaker listening test.
+- Linux low-resource profiles pass all 22 measurement windows and a 180-second
+  soak on each architecture, with 128 MiB heap and two processors. Soak paint
+  throughput is 62.071/s on x86-64 and 62.184/s on ARM64. Java paint completion is
+  distinct from native display presentation; measurements and limits are in
+  [PERFORMANCE.md](PERFORMANCE.md).
+- The installed user launcher runs the current Linux x86-64 app while IPv4/IPv6
+  sockets are denied to its child process and invalid global Java overrides are
+  present. Actual Zed task selection also launches the current game. Movement,
+  jumping, pause and physical close were inspected in nine installed-app and
+  eleven Zed originals. The original Emberwood launchers are preserved.
 
-## Verified scope and limits
+The unchanged dependency helper also has
+[clean Ubuntu 24.04 recovery evidence on both architectures](https://github.com/samsaw123456/emberwood-kt/actions/runs/43720498665).
+An isolated container started without seven required library names or package
+indexes, refused downloads in offline mode, then installed 21 required/dependency
+packages with zero upgrades or removals. Bundled fonts loaded, and healthy
+offline reuse left apt history unchanged. Host libraries were not altered.
 
-Linux x86-64 and ARM64 have complete 280-case source and bundled control reviews.
-The real 20-level native keyboard campaign ran on Linux x86-64. The final installer
-revision passed install/upgrade/removal and saved-settings checks. Its four source/bundled routes
-also passed actual Main launch, movement, jump, pause and physical Alt+F4 with clean
-Java exit; all 36 full-size Main frames were inspected. All 56 sound cases and
-336 WAVs were reviewed separately.
+## macOS qualification in progress
 
-[Clean dependency recovery run 43720498665](https://github.com/samsaw123456/emberwood-kt/actions/runs/43720498665)
-passed on both Ubuntu 24.04 architectures. An official disposable container began
-without seven required library names or package indexes, refused downloads in
-offline mode, then refreshed indexes and installed 21 required/dependency packages
-with zero upgrades or removals. The real bundled fonts loaded and healthy offline
-reuse left apt history unchanged. The app was read-only; host libraries were not
-changed. This container proof supplements the separate actual desktop checks.
+The current ordinary Main app passes bounded physical movement, release,
+product-named app menus and Command-Q on Intel and Apple Silicon in
+[run 43750035990](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750035990).
+All retained frames were inspected: 77 Intel and 64 ARM originals, using labeled
+contact sheets and selected full-size originals. Exact review scales, timing and
+limits are retained locally. The native identity probe confirms that only the
+unused Services menu is detached and other menu items are preserved.
 
-Both Mac installers, native app icons, offline cached source launch, physical
-Command-Q and source/packaged 180-second performance profiles passed. Apple
-Silicon's complete native control inventory passed. The final uninstrumented Mac
-audio repeat passed all 28 physical cases and 168 independently reviewed WAVs on
-both architectures, with no interior exact-zero span of at least 2 ms. Capture
-timestamp discrepancies are recorded separately from the PCM samples.
-The earlier Intel control run rejected a test-only presentation marker. The next
-full run completed but retained three movement/jump observation failures and a
-separate shutdown-monitor error. Their resolution and complete rendered review
-are the remaining control gate.
-
-[The Mac audio trace repeat](https://github.com/samsaw123456/emberwood-kt/actions/runs/43719992137)
-passed all 28 cases and 168 WAVs with the unchanged production JAR/runtime. It adds
-a test-only recording provider/property to a disposable audit app, so it is
-explicitly instrumented evidence. Earlier Mac gaps did not recur in that trace or
-the subsequent uninstrumented run, but their cause remains unresolved. Three final
-Linux ARM mute-edge recordings contain a documented 10.667 ms zero interval
-followed by a 1.56–1.63 ms residual tail before
-silence; reference, restored and long cues have no such gaps. No claim of flawless
-audio or absence of all bugs follows from these measurements.
+The complete current Mac build, installer, offline source launch, control, PCM,
+performance and startup-error matrix is
+[run 43750771895](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750771895).
+It remains pending here until its results and rendered evidence are reviewed.
+No Mac release ZIP is selected on the basis of the focused Main run alone.
 
 See [controls](CONTROLS.md), [audio](AUDIO.md), [performance](PERFORMANCE.md) and
-[packaging](PACKAGING.md) for the maintained acceptance details. Mac builds use
-ad-hoc Hardened Runtime signatures, not Apple notarization; native Mac execution
-was verified on macOS 15, while the bundle declares version 12 as its minimum.
-Large raw images, PCM, logs and before/after manifests are retained locally under
-`build/`; this tracked record preserves the release identities and workflow links.
+[packaging](PACKAGING.md) for the maintained acceptance details and historical
+failures. Mac builds use ad-hoc Hardened Runtime signatures, not Apple
+notarization. Native execution is tested on macOS 15; the bundle's declared
+minimum of macOS 12 is not a claim that version 12 was tested. No finite test set
+establishes absence of every bug. Raw images, PCM and logs are retained locally
+under `build/`; workflow artifacts and this record preserve provenance.

@@ -1,7 +1,8 @@
 # Verification record
 
 This is a separate port of Emberwood v1.3.1, original commit
-`7146ac838c0db21afe9406ea4546cb094aa9721f`. The Godot checkout is unchanged.
+`7146ac838c0db21afe9406ea4546cb094aa9721f`. This port does not modify that
+project; unrelated concurrent changes in its checkout are preserved.
 Verification distinguishes simulation tests, physical input in a native window,
 inspected rendered output, actual audio capture and installed-package testing.
 Fixtures used to reach a menu or scene do not count as traversing a level.
@@ -41,228 +42,76 @@ desktop mix. Java audio flags alone do not satisfy this check.
 
 ## Current evidence
 
-The current candidate JAR is
-`375ae22702bfc62711180138abc3b01ef309339cd636cdfa0d170b8b04e0c0fd`.
-It removes the unused macOS Services submenu through public AppKit APIs before
-showing the window. Formatting, checks and all **67 Kotlin/JVM tests** pass,
-including seven menu-identity/native-callback regressions. Native run43745233648
-fails before input on both Mac architectures: exact parent-item removal returns,
-but the post-clear `servicesMenu` getter remains nonnull. Both audits execute
-zero cases; the subsequent strict menu probe is skipped. Owned cleanup leaves
-no game window or modal, without signals. The Intel cleanup original was
-inspected at full size; evidence is
-`build/ci-controls-menu-candidate-375ae227-macos-intel/build/controls-capture-native-app/review/native-review.json`.
-An observation-only native probe will distinguish retained versus recreated
-registration and actual menu attachment. The candidate is not accepted as a fix;
-first-arrow, menu and final-build validation remain open.
-The current full tools suite passes **188 Python tests** (two macOS SDK tests
-skipped on Linux); Ruff and formatting pass for all 57 Python files.
-An isolated Linux candidate regression also passed six physical cases with exit 0:
-A/Left, D/Right, Return and lifecycle. All 25 referenced frames plus startup were
-inspected, including the original 800×600 resized image. Exact evidence:
-`build/audit-menu-candidate-375ae227-linux/review/native-review.json`.
-This limited check does not replace the candidate's complete inventory.
+The production JAR is
+`ae9686cb8387d5c9f61f4a6cb73d4f9a99803fe6e93e2ce519d495d59b9bdb8c`.
+Linux verification is complete for the recorded scope below. Both Macs pass the
+ordinary-game movement/menu/Quit check; their full current control, PCM and
+performance matrix remains pending in
+[run 43750771895](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750771895).
+The per-platform [coverage table](controls-audit.tsv) preserves that distinction.
 
-The retained audit baseline below is
-`7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
-It fixes the reproduced same-step jump release/re-press defect. Formatting,
-checks and its **60 Kotlin/JVM tests** passed; the three failing pre-fix regressions
-and green repeat remain in `build/regressions/jump-order/`. The full tools suite
-at that earlier `f095925` checkpoint ran 181 Python tests successfully
-(two macOS SDK tests skipped on Linux). Ruff checks and all 55 file-format
-checks, ShellCheck and the 2,107-asset integrity
-check pass. The actual Mac SDK checks run separately on their native hosts, including the
-new stream-buffer/PNG diagnostic fixture explicitly included in CI.
-The retained platform passes below apply to that baseline, not automatically to
-the new menu candidate.
+| Check | Current result and evidence |
+| --- | --- |
+| Formatting, lint and build | Separate `ktlintFormat`, then `check fatJar`: 67 Kotlin/JVM tests pass. The current Python suite passes 206 tests with two macOS-SDK fixtures skipped on Linux; Ruff checks all 59 Python files. Actual native SDK execution is a separate CI gate. Log: `build/logs/python-final-app-name-budget.log`. |
+| Assets and parity data | All 2,107 migrated resources retain their hashes; 20 levels, 60 acorns, 378 gems and 20 hidden fireflies remain authoritative. `tools/check_assets.py` verifies the manifest. |
+| Every Linux control | Source and bundled runtimes on x86-64 and ARM64 each pass all 280 unfiltered cases. All 1,214 referenced frames per route were inspected and hashed, with exact disjoint journals and declared review scale. [CONTROLS.md](CONTROLS.md) maps the four canonical directories and receipts. |
+| Actual Linux audio and OS close | All 56 physical M/Sound cases across four routes pass, with 336 game-only WAVs and all eight waveform sheets independently checked. All 36 ordinary Main images were inspected; physical Alt+F4 leaves no window and all four Java/driver exits are 0. Exact matching-app identities and limits are recorded in [AUDIO.md](AUDIO.md). |
+| Complete native campaign | All 20 levels, six guardians and 60 acorns completed through normal-rate physical input. All 55 originals inspected, including every level entry/completion, guardian before/after, one real fall/retry and the ending: 08:19, one retry, 201/378 gems and all 20 fireflies. Receipt: `build/ci-campaign-ae9686cb/campaign-native/review/native-review.json`. |
+| Low-resource Linux profile | Both source-JVM routes pass all 22 measured windows, including a 180-second soak with a 128 MiB heap and two visible processors. All 56 game captures inspected. These measure completed Java paints, not continuous display-frame rates; no separate bundled profile or process-RSS measurement is claimed. [PERFORMANCE.md](PERFORMANCE.md) retains exact metrics and limits. |
+| Installed Linux launcher | The actual installed app runs through `gtk-launch` with invalid global Java and child-only INET/INET6 denial. Start, D/release, Space/landing, pause and physical Alt+F4 pass; all nine originals opened full-size. Receipt: `build/installed-user-audit-ae9686cb/review.json`. |
+| Actual editor task | Zed loads the Play Emberwood Kotlin task and launches the game; Start, D/release, Space/landing, pause and physical Alt+F4 pass while Zed remains open. All eleven originals opened full-size. Receipt: `build/zed-audit-ae9686cb/review.json`. |
+| Ordinary macOS game | Both architectures pass bounded A/Left movement, interior recovery, correctly named native About/Hide/Quit items, Services absence, physical Escape and Command-Q, with no cleanup signals or remaining game window/PID. This is targeted actual-Main evidence, not the full inventory. Exact journals follow below. |
 
-- Linux x64 source and bundled controls: **280/280 passed per runtime** with
-  exit 0, all 1,214 referenced frames independently inspected, and exact disjoint
-  hashes validated. See `build/audit-{source,packaged}-7d9668ed-final/REVIEW.md`
-  and `controls-reviewed.tsv`.
-- Actual Linux audio and main-app lifecycle: **passed on both architectures**
-  in CI43725301448. All 56 physical audio cases, 336 analyzed WAVs and 36 original
-  main-app frames were independently reviewed. Each source/bundled route starts,
-  moves, jumps, pauses and closes through physical Alt+F4. Evidence:
-  `build/ci-audio-jump-fixed-linux-{x64,arm64}/build/audio-linux/{source,packaged}/`,
-  with PCM and `game-smoke/independent-review/` journals. Playback is captured
-  from a private game-only virtual output; no speaker-hardware claim is made.
-  One ARM bundled mute-cutoff residual is preserved in AUDIO.md.
-- Complete native campaign: **all 20 levels passed** in CI43725299181 at
-  commit `9533e5c5cc1bad10ed119aab7edb2549d5f3cb7a`, with the exact JAR hash
-  retained. All 55 original frames were inspected: entries, completions, six
-  guardian before/defeated pairs, title, retry and ending. Actual OS input
-  collected 60 acorns, all 20 fireflies and 201/378 gems; the ending shows 08:19
-  and one real fall/retry. The CI play command succeeded under `-e -o pipefail`;
-  no separate per-PID numeric exit file was emitted. Full provenance and frame
-  hashes: `build/ci-campaign-7d9668ed/campaign-native/review/native-review.json`.
-- Installed Linux offline launch: **passed** with invalid global Java, blocked
-  internet sockets, actual desktop registry launch and physical Alt+F4.
-  All nine originals were reviewed in `build/installed-user-audit-7d9668ed/`.
-- Zed task: **passed through the actual task picker**, followed by Start,
-  movement/release, jump/landing, pause and physical close. All eleven full-size
-  frames and exact process/JAR identity were inspected. Evidence:
-  `build/zed-audit-7d9668ed/result.json`.
-- Missing output: **passed through actual provider failure**. Physical M
-  hold/release/re-press in all six states consistently retains unavailable.
-  All 19 frames were inspected; seven filtered cases and cleanup exit 0.
-  Evidence: `build/audit-source-7d9668ed-missing-audio-footer/REVIEW.md`.
-- Linux ARM source/bundled: **280/280 fully passed per runtime**, all 1,214
-  referenced frames independently inspected, disjoint journal hashes verified,
-  matching-build actual audio and physical close passed. Complete tables:
-  `build/ci-final-7d9668ed-linux-arm64/build/{audit,audit-packaged}/controls-reviewed.tsv`.
-  Both native commands and their CI job succeeded; no separate per-PID numeric
-  exit file was emitted.
-- macOS ARM native controls: **280/280 fully passed**, all 1,214 referenced
-  frames independently inspected and every disjoint journal/hash validated.
-  Actual fourteen-case PCM, physical Command-Q, both ordinary native launch
-  routes and both 180-second performance routes pass. The full cached source
-  and packaged app trees are identical, including runtime/configuration/signing.
-  Source controls therefore use explicitly labelled shared proof from the
-  bundle's physical inventory. Complete receipts:
-  `build/ci-native-final-7d9668ed-macos-arm/build/controls-native-app/REVIEW.md`.
-- Intel's first source performance run failed one boss window at 40.729 Java
-  paints/second versus a 45 paints/second budget, so controls/audio were skipped.
-  These counters do not measure native presentation FPS. That failed evidence
-  remains intact. The separate diagnostic repeat passed both performance
-  routes and ran all 280 controls: 279 assertions passed, while Left failed its
-  strict release/braking guard after 21 stale-nonce captures extended the hold
-  to 3.31 seconds and the fox reached the world boundary. All four failure
-  originals were inspected; the wall stop is not release proof. That run skipped
-  audio; complete Intel rendered control review remains pending. Evidence:
-  `build/ci-native-repeat-7d9668ed-macos-intel/build/controls-native-app/review/native-left-failure-review.json`.
-- The panel-marker Intel repeat, run 43732405531, also ran all 280 cases
-  with only Left failing the strict release/braking guard. Its fifteen rejected
-  snapshots retain the old scene, not just the nonce: the first/latest rejected
-  PNGs are byte-identical with the fox at its start, before the accepted frame
-  jumps to the world boundary at 00:04. The physical hold lasted 3.377 seconds.
-  All six failure/diagnostic originals were inspected. The failure remains at
-  `build/ci-native-panel-marker-7d9668ed-macos-intel/build/controls-native-app/review/native-left-failure-review.json`.
-- The six-case Intel diagnostic, run 43736264766, reproduced the Left failure.
-  Both native snapshots and the independent own-window stream retain the same
-  old surface while Java reaches 140 fresh-nonce drawing callbacks before the stream
-  presents it, about 3.06 seconds later. Those callbacks precede Swing's final
-  buffer publication. This excludes a marker-only error and
-  an isolated snapshot-manager cache explanation; it does not yet identify the
-  native publication/compositor/capture cause. All 23 referenced frames, startup and
-  both rejected originals were inspected. Collection and cleanup passed
-  separately from the command failure: 719 ordered Java paint records and 458
-  stream records with 42 retained images, without dropped/truncated data.
-  Evidence: `build/ci-capture-trace-7d9668ed-macos-intel/build/controls-capture-native-app/review/native-java-paint-review.json`.
-  The subsequent same-runner buffering comparison is recorded below;
-  no game change or full Intel pass is inferred.
-- Intel actual audio: **all fourteen physical M/Sound cases passed** in
-  the separate run 43732427910. All 84 WAVs, two waveform sheets and two cleanup
-  desktops were independently inspected; the complete 119-entry original app
-  matches the successful source/packaged launch and performance evidence.
-  `build/ci-audio-current-7d9668ed-macos-intel/build/audio-native-app/pcm/independent-review/review.json`
-  retains the exact game hash and output scope. This does not promote the
-  still-pending control inventory.
-- Test-only panel marker regression: **twelve physical Linux cases passed**,
-  with all 72 referenced frames plus startup inspected, exit 0 and no stale
-  captures. The marker now paints after the actual game scene without changing
-  content insets. This verifies the helper locally; the independent full Intel
-  repeat did not resolve whole-scene capture staleness, as recorded above. Evidence:
-  `build/audit-source-7d9668ed-panel-marker/REVIEW.md`.
+The full Linux controls and campaign are from
+[run 43747640143](https://github.com/samsaw123456/emberwood-kt/actions/runs/43747640143).
+The campaign contains 3,427 physical input batches / 3,732 edges, with no state
+fixture, teleport or direct simulation step. Its chapter-five fall uses natural
+checkpoint recovery; it is not R-key evidence. Its pipeline/job succeeds under
+`bash -e -o pipefail`; no independent per-PID numeric campaign exit receipt exists.
+The detached installed/editor launches likewise prove PID/window disappearance,
+without a captured numeric JVM exit code.
 
-- Opt-in Java paint journal: **six filtered physical Linux cases passed**
-  with all 25 referenced frames plus startup inspected, clean exit and 380
-  ordered completed paints. Direct frame counters and nano/epoch brackets are
-  retained without dropped records. This verifies the diagnostic locally;
-  Java paint completion alone is not native presentation proof. Evidence:
-  `build/audit-source-7d9668ed-paint-trace/REVIEW.md`.
-- Buffering comparison helper at commit `8048087`: **three local six-case
-  routes passed**, 18 cases total, with all 75 referenced frames and three
-  startup originals inspected and every process exiting 0. The observed
-  RepaintManager state was true/false/true before window creation and after
-  readiness; all three retained the same XRender backend, panel flags and
-  geometry. Exact evidence: `build/audit-buffer-pair-7d9668ed/comparison-review.json`.
-  The 58 Kotlin/JVM tests and 29 focused Python driver checks pass at this
-  revision, with the production JAR unchanged. This is a bounded local
-  diagnostic, not a Mac or production-fix verdict.
-- Intel comparison 43738815451 observed the Metal backend in both copies,
-  with buffering true then false. The default repeated the Left presentation
-  timeout; disabling buffering produced incomplete captures without the fox,
-  HUD or nonce, failed all five recorded cases and aborted the lifecycle row.
-  The strict barrier prevented the third launch. All 28 retained default
-  control/diagnostic originals and all ten disabled originals were inspected.
-  This rejects the proposed buffering change as a correction; the exact native
-  cause remains unresolved. `build/ci-buffer-comparison-7d9668ed-macos-intel/build/controls-capture-comparison/native-visual-review.json`
-  retains the scope and the old failed-request image-overwrite limitation.
-- Scheduled-repaint helper at `fb688398`: **six local physical cases passed**,
-  with all 25 referenced frames plus startup inspected and exit 0. All 26
-  snapshot requests used normal repaint scheduling, unique request nonces and
-  unchanged enabled buffering. The regression also proves that failed requests
-  retain distinct first/latest originals and cannot reuse a stale request's
-  nonce. Evidence: `build/audit-source-7d9668ed-scheduled-repaint/REVIEW.md`.
-  This local result does not establish the native Mac behavior.
-- Intel scheduled repaint, run 43740408807: **Left still fails** its strict
-  moving/interior release guard. The actual Metal backend and enabled buffering
-  are retained; all 25 requests use scheduled repaint and distinct nonces.
-  Twenty-six stale reads precede the accepted wall frame, extending the physical
-  hold to 3.319 seconds. All 24 referenced frames, startup and 18 retained
-  rejected originals were inspected. The five other filtered rows pass their
-  limited diagnostic scope. The independent stream presents the new nonce
-  2.858 seconds after its first Java callback, with 165 newer drawing callbacks
-  in between. The gap contains 93.928 ms of recorded safepoints. All 32 stream
-  originals were independently reviewed; the 677 Java callbacks are ordered.
-  Trace collection and cleanup pass separately from the failed command proof.
-  Evidence: `build/ci-scheduled-7d9668ed-macos-intel/build/controls-capture-native-app/review/native-review.json`.
-  Normal repaint scheduling has not resolved the failure.
-- The ordinary Main probe 43740419423 stopped before any input: its first guard
-  ran before the native window was ready. It records no movement, and cleanup
-  used SIGTERM on its owned process, so neither ordinary-game responsiveness nor
-  physical-Quit proof is established. The app tree is unchanged. A corrected
-  bounded readiness check ran separately in 43741464146 and reached gameplay.
-  All 80 originals were independently reviewed: A moves/stops normally, while
-  the first Left has a 3.123-second gap between complete stream frames despite
-  an independently bounded 356.831 ms OS-level hold/release. The next frame
-  shows the fox at the boundary, without damage, respawn or a modal. Main's
-  held capture times out reading AXFocusedWindow; NativeAudit's snapshot route
-  does not make this AX request. The causal distinction is unresolved. Cleanup
-  uses SIGTERM, with no physical-Quit claim. Evidence:
-  `build/ci-main-ready-7d9668ed-macos-intel/build/main-movement-native-app/independent-review/review.json`.
-  No full Intel pass is inferred.
-- The focused CGL diagnostic 43741471213: **Left still fails** with observed
-  `CGLGraphicsConfig`, unchanged enabled buffering and the exact expected
-  properties. Twenty-one stale reads precede the fresh wall frame after a
-  3.355-second physical hold. All 24 referenced frames, startup and both rejected
-  originals were inspected; 345 ordered Java drawing callbacks and 25 distinct
-  snapshot invocations were retained. This alternate backend does not resolve
-  the failure. Evidence:
-  `build/ci-opengl-7d9668ed-macos-intel/build/controls-capture-native-app/review/native-review.json`.
-  The production launcher and rendering flags remain unchanged; no full
-  280-command pass is inferred from this diagnostic.
-- Ordinary-Main stream-only run 43743043450 identifies a native wait during
-  the first Left failure: all 568 AppKit main-thread samples are inside
-  Services-menu population; 560 wait synchronously for a VoiceShortcutClient
-  XPC reply. The physical Left release is acknowledged after 357.015 ms, but
-  the native image freezes and later reaches the boundary. No synchronous
-  window queries run during the held/early-release interval. The live sample
-  is retained at
-  `build/ci-main-stream-sampled-7d9668ed-macos-intel/build/main-movement-native-app/live-sample.txt`.
-  A focused Mac-only candidate removes the unused Services submenu through
-  public AppKit APIs; native validation and affected final-build checks are
-  still required. No corrected-game pass is inferred from source review.
-- Snapshot observation 43743028454 failed its unchanged 50 ms release limit
-  during D preparation (52.838 ms late). Retry 43743527267 failed during Return:
-  OS-up acknowledgement arrived 51.580 ms after its deadline, although up was
-  posted only 8.579 ms late. Neither reached Left, streaming or live sampling.
-  All four and three original frames respectively were inspected; the latter
-  visibly starts the level before the timing guard aborts. Both preserve owned
-  SIGTERM cleanup rather than physical Quit proof. Exact journals:
-  `build/ci-main-snapshot-sampled-7d9668ed-macos-intel/build/main-movement-native-app/independent-review/review.json`
-  and `build/ci-main-snapshot-sampled-repeat-7d9668ed-macos-intel/build/main-movement-native-app/independent-review/review.json`.
+Current macOS ordinary-game evidence is from
+[run 43750035990](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750035990):
+
+- ARM: `build/ci-main-name-budget-ae9686cb-macos-arm/build/main-movement-native-app/independent-movement-review/review.json`.
+  All 64 originals were inspected at the scales recorded in the journal. A/Left
+  holds last 351.724/358.373 ms; native stream timestamp gaps around hold/recovery
+  are at most 34.780/35.411 ms.
+- Intel: `build/ci-main-name-budget-ae9686cb-macos-intel/build/main-movement-native-app/root-review/review.json`.
+  All 77 originals were inspected: 66 stream frames in 576-pixel cells and eleven
+  other originals at full size. A/Left holds last 352.781/350.849 ms; corresponding
+  native gaps are at most 34.850/34.700 ms.
+
+Both runs use ordinary Main, no scene fixtures, forced painting, rendering override
+or live sampler. The fox moves left and rests on interior ground before the native
+menu is physically opened. Command-Q removes the game with its modifier released;
+`open -W` returns 0, which is not a separate kernel JVM exit measurement. Finite
+successful observations do not prove uniformly smooth behavior under every load.
+
+The six-case focused ARM run 43747451930 and unchanged Intel repeat 43748162685
+also pass their strict native menu probes: only the exact Services item is removed,
+and all eight remaining sibling identities/actions/keys survive preparation and
+show. The first Intel trial's A capture overrun remains a failed trial; it is not
+relabeled by the later pass. The failed `375ae227` registration assertion and the
+native observations that corrected it are retained in the history. Current
+production removes the unused Services menu item without clearing registration;
+no graphics override, permission bypass or global setting is used.
 
 ## Earlier evidence
 
 [Historical verification and investigations](history/verification-investigation.md)
-retain the d549/882 baselines, failed attempts, their exact limitations, and the
-diagnostics that exposed the jump-order defect. They are not substitutes for the
+retain the d549/882/7d baselines, failed candidates and timing trials, their exact
+limitations, and the diagnostics that exposed jump ordering and native Services waits. They are not substitutes for the
 current runnable build's inventory and campaign above.
 
 ## Review findings corrected
 
+- On Intel macOS, the first arrow could block AppKit while it populated the unused
+  Services menu through a synchronous VoiceShortcutClient request. The game now
+  detaches only that exact submenu on AppKit using public APIs. Native probes
+  preserve all other menu identities/actions; ordinary Main movement and physical
+  menu/Quit pass on both architectures. The complete current matrix is still required.
 - A jump release followed by a fresh press in the same simulation step could
   cut the new jump. A fresh logical press now clears only the older release;
   press-then-release still cuts correctly, and overlapping alternate keys retain
@@ -287,7 +136,8 @@ current runnable build's inventory and campaign above.
   The task now uses supported reveal/hide settings, verified in the editor itself.
 - Paused and result menus drew gameplay instructions underneath their own footer.
   The gameplay footer is now hidden in menus; results retain an explicit M/sound
-  hint. Every final Linux and Mac ARM control frame was inspected after this fix.
+  hint. Every current Linux control frame was inspected after this fix; earlier Mac
+  reviews retain their build-specific scope.
 - A blocked audio provider could hang window disposal. Initializing devices are
   no longer published to UI controls, and native close runs outside the interface
   thread. Two regression tests exercise blocked initialization and blocked native
@@ -300,14 +150,15 @@ current runnable build's inventory and campaign above.
   initialization. A playback-only AudioQueue backend replaces that Mac path;
   seven native-callback regression tests pass. Native ABI, startup, lifecycle
   and captured-PCM checks passed on both Mac architectures in the retained
-  baseline; the corrected 7d9668ed build repeats them successfully on both
-  architectures, with the independent Intel audio run recorded above. Missing native
+  baseline; the retained 7d9668ed build repeated them successfully on both
+  architectures. Current ae9686cb Linux output is closed; current Mac PCM remains
+  pending in the matrix linked above. Missing native
   libraries and failed output resets now become explicit audio-unavailable
   states without letting mute or window close hang the interface.
 
-The current 7d9668ed build passes separate `ktlintFormat`, then `check fatJar`,
-with all 60 tests. Its complete Linux inventories, macOS ARM inventory and native
-twenty-level campaign are recorded above; Intel's final repeat remains open.
+The current ae9686cb build passes separate `ktlintFormat`, then `check fatJar`,
+with all 67 Kotlin/JVM tests. Its complete Linux inventories and native
+twenty-level campaign are recorded above; the current full Mac matrix remains open.
 Native playthrough attempts use ordinary input and real campfire retries;
 every retry is retained in their results, and no state fixture or teleport counts
 as campaign progress.

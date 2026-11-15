@@ -3,21 +3,110 @@
 ## Current validation status
 
 The current candidate JAR is
-`375ae22702bfc62711180138abc3b01ef309339cd636cdfa0d170b8b04e0c0fd`.
-It removes the unused macOS Services menu after AWT initialization to address
-the observed AppKit Services/Shortcuts wait. All 67 unit tests pass, but native
-first-arrow movement, physical menu inspection, full control coverage and new
-performance/audio measurements remain pending. The first candidate CI attempt
-stopped in a test-fixture scheduling assertion before building or launching the
-game; it supplies no native result.
-The subsequent Intel Main retry reaches the expected startup-error dialog before
-any input; both actual desktop images were inspected, and owned SIGTERM cleanup
-clears the dialog. That run proves neither movement nor physical acknowledgement.
-Its Java stderr was not redirected, so its originating exception is not independently
-retained. The companion ARM audit separately records that the native registration
-getter remains non-null after submenu removal and the attempted nil assignment.
-The candidate therefore remains failed at native startup while that API behavior
-is investigated; no relaxation of the observed movement/release checks follows.
+`ae9686cb8387d5c9f61f4a6cb73d4f9a99803fe6e93e2ce519d495d59b9bdb8c`.
+It detaches the exact unused macOS Services submenu while preserving its native
+registration and sibling commands. All 67 unit tests pass. Actual startup-error
+acknowledgement passes on both Macs. Fresh Linux performance, PCM, complete control
+review and Main smoke verification are complete. The current ordinary Mac Main
+launch also passes bounded movement, corrected application-menu labels and physical
+Quit on both architectures.
+The complete native Mac control inventory and performance/audio remain pending in
+the [current full matrix](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750771895).
+
+| Current ae9686cb source-JVM route | Completed Java paints/s during 180 s soak | Mean Java paint | CPU, one core | Retained heap before → after |
+| --- | --- | --- | --- | --- |
+| Linux x86-64 | 62.071 | 1.832 ms | 9.993% | 20,601,656 → 20,628,768 bytes |
+| Linux ARM64 | 62.184 | 1.749 ms | 10.866% | 20,283,208 → 20,194,744 bytes |
+
+Both profiles pass all 22 windows with a 128 MiB heap and two visible processors.
+Each route's 1,076 buffered observations independently reproduce the aggregate
+metrics; no active interval of at least 100 ms falls below 45 completed Java
+paints/s. These are Java painting rates, not continuous display-frame measurements.
+All 56 original game captures were inspected in labeled 596 px overview cells,
+with four critical originals also opened at full size. Title/pause idle image
+pairs are pixel-identical. This job has no audio output device and records neither
+process RSS nor GC logs; the separate physical PCM runs do not add playback cost
+to these measurements. Only one source-JVM profile per architecture was measured,
+not a separate bundled profile. Evidence:
+[run 43747640143](https://github.com/samsaw123456/emberwood-kt/actions/runs/43747640143),
+`build/ci-final-ae9686cb-linux-{x64,arm64}/build/performance/independent-review/`.
+
+The [ordinary Main repeat 43750035990](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750035990)
+passes the unchanged physical-hold, pixel-motion, release, zero-skipped-image and
+cleanup requirements on both Macs. Actual A/Left holds last 351.724/358.373 ms on
+ARM64 and 352.781/350.849 ms on Intel. Native stream timestamp gaps around those
+holds and recovery are at most 34.780/35.411 ms and 34.850/34.700 ms, respectively.
+Both foxes visibly travel screen-left, stop on interior ground and remain at rest.
+Only after this movement observation, a physical click opens the actual app menu:
+About/Hide/Quit correctly identify Emberwood Kotlin and Services is absent.
+Physical Escape closes the menu; Command-Q then closes the game, releases the
+modifier and leaves no window or cleanup signal. The `open -W` launcher returns
+zero; this is not a separately observed kernel JVM exit status.
+
+All 64 ARM originals were hash-checked and inspected: 54 stream images and six
+ordinary images in ten labeled 512 px overview sheets, plus the full-size title,
+three menu desktops, cleanup desktop and three critical movement originals.
+The Intel review covers all 77 originals: 66 stream images in 576 px cells and
+eleven other originals at full size. This is finite ordinary-game evidence,
+without fixtures, forced painting, pipeline overrides or a live native sampler;
+it does not prove every frame is smooth under every load or replace the complete
+control inventory. Review journals:
+`build/ci-main-name-budget-ae9686cb-macos-arm/build/main-movement-native-app/independent-movement-review/`
+and `build/ci-main-name-budget-ae9686cb-macos-intel/build/main-movement-native-app/root-review/`.
+
+The earlier, retained ordinary Intel Main observation of this candidate shows bounded A and
+Left holds (352.79/355.83 ms until the key-up post), screen-left movement and
+interior recovery. Native stream timestamps continue across those intervals;
+their largest gaps are 34.91/35.32 ms. However, the image writer skipped two
+requested samples, so the unchanged completeness gate rejects the run before
+application-menu inspection or physical Quit. This is partial evidence, not a
+completed movement/menu audit or a claim that intermittent stalls are excluded.
+The first ARM attempt displays the correct title but stops before input because the
+initial diagnostic accepted only Intel's window width. The reader now supports
+the measured ARM letterbox geometry without resampling images or changing motion
+thresholds. Its [native repeat 43748487574](https://github.com/samsaw123456/emberwood-kt/actions/runs/43748487574)
+passes both bounded held/released movement observations with no skipped stream
+images. Physical application-menu inspection then finds Services absent but
+About/Hide/Quit incorrectly named MainKt, so the run fails before physical Quit.
+The shared app builder now supplies the complete application name; its native
+menu repeat passes as recorded above. These failed attempts and timing receipts are retained in
+`build/ci-main-detachment-ae9686cb-macos-{arm,intel}/build/main-movement-native-app/`.
+The ARM geometry/menu evidence is in `build/ci-main-geometry-ae9686cb-macos-arm/`.
+
+The [focused Intel repeat 43748162685](https://github.com/samsaw123456/emberwood-kt/actions/runs/43748162685)
+passes all six direction/start/lifecycle cases and the strict native menu probe.
+All 51 retained stream images were inspected in labeled half-size sheets, with
+four critical originals also inspected at full size. The first held Left nonce
+reaches the native stream 122.8 ms after its Java paint; the largest native
+timestamp gap around that hold is 80.0 ms. This finite fixture-based observation
+does not replace ordinary Main or the complete control inventory. Its independent
+review is retained in
+`build/ci-controls-detachment-repeat-ae9686cb-macos-intel/build/controls-capture-native-app/independent-stream-review/`.
+
+The preceding candidate `375ae227` failed native startup because it also required
+the registration getter to become null immediately after a nil assignment.
+The native observations on both Macs instead retain the same detached pointer
+until the window is shown. The corrected candidate checks actual detachment and
+sibling preservation without changing registration. No movement or release
+threshold has been relaxed.
+
+Both actual Intel startup-error desktop images from that failed candidate were
+inspected; owned SIGTERM cleanup clears the dialog, but supplies no physical
+acknowledgement proof. Its ordinary Main launcher did not redirect Java stderr,
+so the original exception is not independently retained there. Separate forced
+native-access-denial probes on both Macs verify the expected exception and error
+dialog, but reject the accessibility snapshot before input. A reporting-only
+correction retains those raw fields. The subsequent ARM receipt identifies an
+untitled Swing button whose accessibility name is exposed through its label,
+rather than `AXTitle`. The reader now retains `AXDescription` and still requires
+the exact error text and one unambiguous enabled OK button. The subsequent
+[both-Mac run 43748219576](https://github.com/samsaw123456/emberwood-kt/actions/runs/43748219576)
+passes real Return/release and exact-PID kernel exit 1, with no cleanup signals or
+remaining windows. All four original error/cleanup desktops were inspected at
+full size. These isolated-copy denial tests prove the error path, not ordinary
+gameplay. Journals are in
+`build/ci-startup-label-ae9686cb-macos-{arm,intel}/build/startup-failure-native-app/independent-review/`.
+All failed evidence remains preserved.
 
 The following measurements and investigation belong to the retained baseline JAR
 `7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
@@ -34,9 +123,10 @@ the later control trace found a 3.060-second native surface-publication delay
 while Java paint calls continued. Passing paint-throughput averages therefore
 do not establish smooth on-screen pacing. A subsequent unchanged-Main probe
 also reached the left boundary after a promptly released Left command, with a
-3.123-second stream gap. Intel movement/presentation remains unresolved.
+3.123-second stream gap. Baseline Intel movement/presentation remained unresolved.
 The next live native sample identifies an AppKit Services/Shortcuts synchronous
-wait during the continuing stall; a remedy has not yet been verified.
+wait during the continuing stall; the current candidate's separate evidence is
+listed above.
 
 | Retained 7d9668ed build and launch route | Completed Java paints/s during soak | Mean Java paint | CPU, one core | Retained heap before → after |
 | --- | --- | --- | --- | --- |
@@ -65,7 +155,7 @@ respectively, across 257 samples each; this is not an OS high-water measurement.
 The 1024×648 content remains letterboxed correctly. Evidence and exact hashes:
 `build/ci-native-final-7d9668ed-macos-arm/build/performance-{source,native}-app/independent-review/`.
 
-The first current Intel cached-source profile failed its opossum boss window:
+The first retained baseline Intel cached-source profile failed its opossum boss window:
 40.729 frames/s against the unchanged minimum of 45. Its mean paint time was
 10.489 ms, and its full 180-second soak passed at 56.249 frames/s, 5.669 ms paint
 and 88.760% of one CPU core. All 22 windows completed. Sampled RSS peaked at
@@ -104,7 +194,7 @@ scheduling. Aggregate passes are not a claim of constant frame pacing.
 Independent counter checks, logs, frame hashes and journals are retained in
 `build/ci-native-repeat-7d9668ed-macos-intel/build/performance-{source,native}-app/independent-review/`.
 The repeat later failed one of 280 control cases after stale captures prolonged
-a held Left command; audio was skipped in that matrix. A separate current-build
+a held Left command; audio was skipped in that matrix. A separate baseline
 [audio run](AUDIO.md) subsequently passed all fourteen cases. The subsequent
 [control run 43732405531](https://github.com/samsaw123456/emberwood-kt/actions/runs/43732405531)
 still fails only the Left case. Its retained first/latest rejected images show

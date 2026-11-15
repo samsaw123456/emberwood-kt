@@ -3,9 +3,36 @@
 ## Current validation status
 
 The current candidate JAR is
-`375ae22702bfc62711180138abc3b01ef309339cd636cdfa0d170b8b04e0c0fd`.
-It changes native macOS application-menu preparation. Its 67 unit tests pass;
-fresh physical output and full native control validation remain pending.
+`ae9686cb8387d5c9f61f4a6cb73d4f9a99803fe6e93e2ce519d495d59b9bdb8c`.
+It changes native macOS application-menu preparation. Its 67 unit tests pass.
+Fresh Linux output and complete control verification are complete; native Mac
+output and its complete control inventory remain pending in
+[run 43750771895](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750771895).
+The separate [ordinary Mac Main repeat](https://github.com/samsaw123456/emberwood-kt/actions/runs/43750035990)
+passes bounded movement, actual application-menu labels and physical Quit on both
+architectures. Its visible Sound-on label is not a replacement for the pending
+current-build PCM captures.
+
+| Current ae9686cb evidence | Physical sound controls | Continuity finding |
+| --- | --- | --- |
+| Linux x86-64, source and bundle, run 43747641897 | 14/14 per route; all 168 WAVs independently checked | No interior exact-zero span of at least 2 ms |
+| Linux ARM64, source and bundle, run 43747641897 | 14/14 per route; all 168 WAVs independently checked | No interior exact-zero span of at least 2 ms |
+
+All eight waveform sheets were inspected, with independent original-prefix,
+PCM-metric, suppression/cutoff/restoration and feedback-frequency checks. The
+real Main game also passes launch, screen-right movement, release, jump, landing,
+pause and physical Alt+F4 on both source/bundled routes. All 36 original image
+hashes were checked and every frame inspected in labeled 576 px contact-sheet
+cells; this is not a claim of 36 full-size inspections. All four game processes
+and six private audio daemons exit 0. This remains isolated virtual PipeWire
+output, without microphone/hardware access or changes to the user's session.
+Recorded delivery outliers include 379.8 ms for the x86-64 source PAUSED mouse
+mute and 377.5 ms for ARM64 bundled mouse restoration; functional passes do not
+establish uniformly low event latency.
+
+Evidence: [current Linux run 43747641897](https://github.com/samsaw123456/emberwood-kt/actions/runs/43747641897),
+`build/ci-audio-ae9686cb-linux-{x64,arm64}/build/audio-linux/{source,packaged}/independent-review/`
+and each route's `game-smoke/independent-review/`.
 
 The retained audio evidence below belongs to baseline JAR
 `7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
@@ -32,13 +59,13 @@ audio daemon exited with code zero. This measures the game's own PCM through an
 isolated virtual PipeWire output, without microphones, hardware devices or changes
 to the user's audio session; it does not claim speaker playback.
 
-Evidence: [current Linux output run](https://github.com/samsaw123456/emberwood-kt/actions/runs/43725301448).
+Evidence: [retained Linux output run](https://github.com/samsaw123456/emberwood-kt/actions/runs/43725301448).
 Original recordings and independent journals are retained under
 `build/ci-audio-jump-fixed-linux-{x64,arm64}/build/audio-linux/{source,packaged}/independent-review/`;
 the actual game screenshots and hash journals are in each route's
 `game-smoke/independent-review/` folder.
 
-The current Mac ARM native app also passes all fourteen cases: M in six states,
+The retained Mac ARM native app also passes all fourteen cases: M in six states,
 and mouse/Return/Space/keypad Enter Sound activation in TITLE and PAUSED. Both
 waveform sheets and both actual cleanup desktop images were inspected. All 84
 original hashes match the completion manifest, with the expected game/runtime
@@ -48,11 +75,11 @@ at the 0.96-second buffer boundary are retained separately; there is no matching
 PCM zero gap. All 84 paired clock anchors were checked; the largest GC pause was
 16.082 ms and the largest safepoint 16.281292 ms. No PCM gap recurred to correlate.
 This bounded run does not establish the cause of earlier gaps or universal
-glitch-free playback. Evidence: [current Mac run](https://github.com/samsaw123456/emberwood-kt/actions/runs/43725299181),
+glitch-free playback. Evidence: [retained Mac run](https://github.com/samsaw123456/emberwood-kt/actions/runs/43725299181),
 `build/ci-native-final-7d9668ed-macos-arm/build/audio-native-app/pcm/independent-review/`.
 
-The separate [current Intel output run](https://github.com/samsaw123456/emberwood-kt/actions/runs/43732427910)
-closes the audio step skipped by the two earlier current-build matrix runs. All
+The separate [retained Intel output run](https://github.com/samsaw123456/emberwood-kt/actions/runs/43732427910)
+closes the audio step skipped by the two earlier baseline matrix runs. All
 14 physical cases, 84 original WAVs, both waveform sheets and both cleanup
 desktops were independently reviewed. Complete cue durations are intact and no
 uninterrupted cue has a zero gap of at least 2 ms. Eight recorder PTS discrepancies
