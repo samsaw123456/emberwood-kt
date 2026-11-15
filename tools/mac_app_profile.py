@@ -1,4 +1,4 @@
-"""Profile an isolated LaunchServices app copy with its exact shipped JVM and game."""
+"""Audit an isolated LaunchServices app copy with its exact shipped JVM and game."""
 
 import argparse
 import ctypes
@@ -19,57 +19,57 @@ from pathlib import Path
 from diagnose_mac_output import default_output
 from mac_profile_observer import NativeStatus
 from mac_test_bridge import Controller
+from package_integrity import tree_digest
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def tree_digest(root):
-    """Include paths, symlink targets and file contents without following links."""
-    digest = hashlib.sha256()
-    for path in sorted(root.rglob("*")):
-        if path.is_symlink():
-            content = os.readlink(path).encode()
-            kind = b"link"
-        elif path.is_file():
-            content = path.read_bytes()
-            kind = b"file"
-        else:
-            continue
-        digest.update(kind + b"\0" + path.relative_to(root).as_posix().encode())
-        digest.update(b"\0" + hashlib.sha256(content).digest())
-    return digest.hexdigest()
-
-
-def configure_app(app, tests, output, seconds, input_socket):
+def configure_app(app, tests, output, seconds, input_socket, audit="performance"):
     configs = list((app / "Contents/app").glob("*.cfg"))
     if len(configs) != 1:
         raise RuntimeError("Expected one native launcher configuration")
     config = configs[0]
     text = config.read_text()
+    options = [
+        f"-Daudit.root={ROOT}",
+        f"-Daudit.python={sys.executable}",
+    ]
+    if input_socket is not None:
+        options.append(f"-Daudit.inputSocket={input_socket}")
+    if audit == "performance":
+        main_class = "emberwood.PerformanceAudit"
+        options.extend(
+            [
+                "-XX:ActiveProcessorCount=2",
+                f"-Dperformance.output={output}",
+                f"-Dperformance.soakSeconds={seconds}",
+            ]
+        )
+    elif audit == "controls":
+        main_class = "emberwood.NativeAuditKt"
+        options.append(f"-Daudit.output={output}")
+    elif audit == "audio":
+        main_class = "emberwood.AudioStateFixture"
+    else:
+        raise ValueError("Unknown native audit mode")
     replacements = {
-        "app.mainclass=emberwood.MainKt": "app.mainclass=emberwood.PerformanceAudit",
+        "app.mainclass=emberwood.MainKt": f"app.mainclass={main_class}",
         "app.classpath=$APPDIR/emberwood-kotlin.jar": (
             "app.classpath=$APPDIR/emberwood-kotlin.jar\n"
-            "app.classpath=$APPDIR/performance-audit.jar"
+            "app.classpath=$APPDIR/native-audit.jar"
         ),
-        "java-options=-Xmx256m": "java-options=-Xmx128m",
-        "[JavaOptions]": (
-            "[JavaOptions]\n"
-            "java-options=-XX:ActiveProcessorCount=2\n"
-            f"java-options=-Daudit.root={ROOT}\n"
-            f"java-options=-Daudit.python={sys.executable}\n"
-            f"java-options=-Daudit.inputSocket={input_socket}\n"
-            f"java-options=-Dperformance.output={output}\n"
-            f"java-options=-Dperformance.soakSeconds={seconds}"
-        ),
+        "[JavaOptions]": "[JavaOptions]\n"
+        + "\n".join(f"java-options={value}" for value in options),
     }
+    if audit == "performance":
+        replacements["java-options=-Xmx256m"] = "java-options=-Xmx128m"
     for original, replacement in replacements.items():
         if text.splitlines().count(original) != 1:
             raise RuntimeError(f"Unexpected native configuration: {original}")
         text = text.replace(original, replacement)
     config.write_text(text)
     with zipfile.ZipFile(
-        app / "Contents/app/performance-audit.jar", "w", zipfile.ZIP_DEFLATED
+        app / "Contents/app/native-audit.jar", "w", zipfile.ZIP_DEFLATED
     ) as archive:
         for path in sorted(tests.rglob("*")):
             if path.is_file():
@@ -122,7 +122,47 @@ def owned_app_pid(native, app, controller, known_pid):
     return candidate if executable == controller.executable else None
 
 
-def launch_profile(app, output, timeout, controller):
+def validate_completion(result, audit, seconds):
+    if not isinstance(result, dict) or result.get("result") != "PASS":
+        raise RuntimeError("Native audit failed; inspect completion.json")
+    required = {"result", "exception"}
+    if audit == "controls":
+        required.update(
+            {"cases", "expected_cases", "failed_cases", "failure_count", "filtered"}
+        )
+    elif audit == "performance":
+        required.update(
+            {"measured_windows", "soak_seconds", "failed_scenes", "failures"}
+        )
+    else:
+        raise RuntimeError("Unknown native audit completion mode")
+    if not required.issubset(result):
+        raise RuntimeError("Native audit completion is missing required evidence")
+    if audit == "controls":
+        if (
+            result.get("cases") != 280
+            or result.get("expected_cases") != 280
+            or result.get("failed_cases") != []
+            or result.get("failure_count") != 0
+            or result.get("exception") is not None
+            or result.get("filtered") is not False
+        ):
+            raise RuntimeError(
+                "Native controls completion does not prove the full 280-case inventory"
+            )
+    elif (
+        result.get("measured_windows") != 22
+        or result.get("soak_seconds") != seconds
+        or result.get("failed_scenes") != []
+        or result.get("failures") != []
+        or result.get("exception") is not None
+    ):
+        raise RuntimeError(
+            "Native performance completion does not match the requested full measurement"
+        )
+
+
+def launch_profile(app, output, timeout, controller, audit="performance", seconds=30):
     native = NativeStatus()
     process = None
     pid = None
@@ -184,10 +224,7 @@ def launch_profile(app, output, timeout, controller):
         if not completion.is_file():
             raise RuntimeError("Native audit ended without its completion record")
         result = json.loads(completion.read_text())
-        if result.get("result") != "PASS":
-            raise RuntimeError(
-                "Native performance audit failed; inspect completion.json"
-            )
+        validate_completion(result, audit, seconds)
         if not pid:
             raise RuntimeError(
                 "Audit reported success but no native app PID was observed"
@@ -219,15 +256,16 @@ def launch_profile(app, output, timeout, controller):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--output", type=Path, default=ROOT / "build/performance-native-app"
+        "--audit", choices=("performance", "controls"), default="performance"
     )
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--soak-seconds", type=int, default=30)
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("Run this diagnostic on macOS")
     if not 30 <= args.soak_seconds <= 1800:
         parser.error("Soak duration must be between 30 and 1800 seconds")
-    output = args.output.resolve()
+    output = (args.output or ROOT / "build" / f"{args.audit}-native-app").resolve()
     if "\n" in str(output) or "\r" in str(output):
         parser.error("Output path cannot contain a line break")
     output.mkdir(parents=True, exist_ok=True)
@@ -239,7 +277,15 @@ def main():
     tests = ROOT / "build/classes/kotlin/test"
     if (
         not original.is_dir()
-        or not (tests / "emberwood/PerformanceAudit.class").is_file()
+        or not (
+            tests
+            / "emberwood"
+            / (
+                "PerformanceAudit.class"
+                if args.audit == "performance"
+                else "NativeAuditKt.class"
+            )
+        ).is_file()
     ):
         parser.error("Build the native package and performance test classes first")
     selected = default_output()
@@ -249,6 +295,7 @@ def main():
     ).hexdigest()
     evidence = {
         "launch_method": "LaunchServices open -W -n",
+        "audit": args.audit,
         "game_jar_sha256": jar_digest,
         "original_runtime_sha256": runtime_digest,
         "selected_output": selected,
@@ -265,7 +312,9 @@ def main():
             evidence["native_launcher"] = plistlib.load(stream)["CFBundleExecutable"]
         executable = app / "Contents/MacOS" / evidence["native_launcher"]
         controller = controllers.enter_context(Controller(output, executable))
-        configure_app(app, tests, output, args.soak_seconds, controller.path)
+        configure_app(
+            app, tests, output, args.soak_seconds, controller.path, args.audit
+        )
         # Re-sign only the enclosing app: its already signed runtime stays identical.
         subprocess.run(["codesign", "--force", "--sign", "-", app], check=True)
         subprocess.run(["codesign", "--verify", "--deep", "--strict", app], check=True)
@@ -283,7 +332,12 @@ def main():
         record.write_text(json.dumps(evidence, indent=2) + "\n")
         try:
             evidence["audit_completion"] = launch_profile(
-                app, output, args.soak_seconds + 360, controller
+                app,
+                output,
+                args.soak_seconds + 360 if args.audit == "performance" else 2700,
+                controller,
+                args.audit,
+                args.soak_seconds,
             )
             controller.close()
             evidence["external_controller_cleanup"] = "PASS"
@@ -294,7 +348,7 @@ def main():
             raise
         finally:
             record.write_text(json.dumps(evidence, indent=2) + "\n")
-    print("PASS: copied native app completed the unchanged performance thresholds")
+    print(f"PASS: copied native app completed the {args.audit} audit")
 
 
 if __name__ == "__main__":

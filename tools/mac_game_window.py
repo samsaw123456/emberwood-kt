@@ -54,6 +54,10 @@ class GameWindow:
                 ctypes.c_void_p,
             ),
             "CFRelease": ([ctypes.c_void_p], None),
+            "CFStringGetCString": (
+                [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long, ctypes.c_uint32],
+                ctypes.c_bool,
+            ),
         }
         for name, (arguments, result) in signatures.items():
             function = getattr(self.foundation, name)
@@ -80,12 +84,13 @@ class GameWindow:
             )
         return result
 
-    def find(self, pid):
+    def find(self, pid, title=None):
         names = (
             "kCGWindowOwnerPID",
             "kCGWindowLayer",
             "kCGWindowNumber",
             "kCGWindowBounds",
+            "kCGWindowName",
         )
         keys = {
             name: self.foundation.CFStringCreateWithCString(
@@ -110,6 +115,18 @@ class GameWindow:
                         numbers[name] = value.value
                 if numbers.get(names[0]) != pid or numbers.get(names[1]) != 0:
                     continue
+                name = self.foundation.CFDictionaryGetValue(window, keys[names[4]])
+                text = ctypes.create_string_buffer(1024)
+                window_title = (
+                    text.value.decode()
+                    if name
+                    and self.foundation.CFStringGetCString(
+                        name, text, len(text), 0x08000100
+                    )
+                    else None
+                )
+                if title is not None and window_title != title:
+                    continue
                 bounds = Rectangle()
                 item = self.foundation.CFDictionaryGetValue(window, keys[names[3]])
                 if item and self.core.CGRectMakeWithDictionaryRepresentation(
@@ -119,10 +136,13 @@ class GameWindow:
                         {
                             "id": numbers[names[2]],
                             "bounds": [bounds.x, bounds.y, bounds.width, bounds.height],
+                            "title": window_title,
                         }
                     )
             if not found:
                 raise RuntimeError("The exact game PID has no visible ordinary window")
+            if title is not None and len(found) != 1:
+                raise RuntimeError("The exact game window title is ambiguous")
             return max(found, key=lambda item: item["bounds"][2] * item["bounds"][3])
         finally:
             if windows:

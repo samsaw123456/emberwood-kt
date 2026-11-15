@@ -7,6 +7,8 @@ import java.awt.Robot
 import java.awt.event.InputEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
@@ -28,7 +30,9 @@ private class NativeAudit(
     private lateinit var frame: JFrame
     private lateinit var panel: GamePanel
     private lateinit var keyboard: PhysicalKeys
-    private val robot = Robot().apply { autoDelay = 8 }
+    private val robot = if (NativeAuditTools.hasExternalController) null else Robot().apply { autoDelay = 8 }
+    private lateinit var pointer: PhysicalPointer
+    private val mouseDeliveries = ConcurrentHashMap<Pair<Int, Boolean>, Delivery>()
     private val rows = mutableListOf<String>()
     private val evidence = mutableListOf<String>()
     private val pendingImages = mutableListOf<Pair<String, BufferedImage>>()
@@ -57,6 +61,38 @@ private class NativeAudit(
     private val activationKeys = listOf("Return", "Space", "Keypad Enter")
 
     fun run() {
+        var failure: Throwable? = null
+        try {
+            execute()
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            try {
+                writeCompletion(failure)
+            } catch (recordError: Throwable) {
+                val previous = failure
+                if (previous == null) throw recordError else previous.addSuppressed(recordError)
+            }
+        }
+    }
+
+    private fun writeCompletion(error: Throwable?) {
+        Files.createDirectories(output)
+        val failed = rows.filter { it.split('\t').getOrNull(3)?.startsWith("FAIL") == true }
+        val result = if (error == null && failures == 0) "PASS" else "FAIL"
+        Files.writeString(
+            output.resolve("completion.json"),
+            "{\"result\":\"$result\",\"cases\":${rows.size},\"expected_cases\":280," +
+                "\"filtered\":${selectedCases != null},\"failure_count\":$failures," +
+                "\"failed_cases\":[${failed.joinToString(",") { NativeAuditTools.quote(it) }}]," +
+                "\"exception\":${error?.let { NativeAuditTools.quote(it.toString()) } ?: "null"}}\n",
+        )
+    }
+
+    private fun delay(milliseconds: Int) = Thread.sleep(milliseconds.toLong())
+
+    private fun execute() {
         Files.createDirectories(output)
         val preferences = Files.createTempDirectory("emberwood-audit-")
         try {
@@ -86,13 +122,21 @@ private class NativeAudit(
                         override fun keyReleased(event: KeyEvent) = delivered(event, false)
                     },
                 )
+                panel.addMouseListener(
+                    object : MouseAdapter() {
+                        override fun mousePressed(event: MouseEvent) = deliveredMouse(event, true)
+
+                        override fun mouseReleased(event: MouseEvent) = deliveredMouse(event, false)
+                    },
+                )
                 panel.addMouseWheelListener { event ->
                     wheelEvents++
                     lastWheelRotation = event.wheelRotation
                 }
             }
-            robot.delay(700)
+            delay(700)
             NativeInputGate.awaitReady(panel.audio, output)
+            pointer = PhysicalPointer(robot)
             directionCases()
             gentleCameraDirections()
             jumpCases()
@@ -119,6 +163,14 @@ private class NativeAudit(
             } catch (failure: Throwable) {
                 failures++
                 failure.printStackTrace()
+            }
+            if (::pointer.isInitialized) {
+                try {
+                    pointer.close()
+                } catch (failure: Throwable) {
+                    failures++
+                    failure.printStackTrace()
+                }
             }
             if (::keyboard.isInitialized) {
                 try {
@@ -272,7 +324,7 @@ private class NativeAudit(
             if (NativeAuditTools.hasExternalController) {
                 NativeAuditTools.capture(bounds, output.resolve("external-capture.png"))
             } else {
-                robot.createScreenCapture(bounds)
+                checkNotNull(robot).createScreenCapture(bounds)
             }
         var image = capture()
         await("Desktop presentation for $label") {
@@ -329,7 +381,7 @@ private class NativeAudit(
         val deadline = System.nanoTime() + 3_000_000_000L
         while (!condition()) {
             check(System.nanoTime() < deadline) { "$description did not complete within three seconds" }
-            robot.delay(5)
+            delay(5)
         }
     }
 
@@ -349,9 +401,9 @@ private class NativeAudit(
 
     private fun tap(key: Int) {
         down(key)
-        robot.delay(25)
+        delay(25)
         up(key)
-        robot.delay(45)
+        delay(45)
     }
 
     private fun physical(vararg events: Pair<String, Boolean>) {
@@ -387,7 +439,19 @@ private class NativeAudit(
     }
 
     private fun releaseAll() {
-        if (nativeKeys.isNotEmpty()) physical(*nativeKeys.map { it to false }.toTypedArray())
+        var failure: Throwable? = null
+        try {
+            if (nativeKeys.isNotEmpty()) physical(*nativeKeys.map { it to false }.toTypedArray())
+        } catch (error: Throwable) {
+            failure = error
+        }
+        try {
+            if (::pointer.isInitialized) pointer.releaseAll()
+        } catch (error: Throwable) {
+            val previous = failure
+            if (previous == null) failure = error else previous.addSuppressed(error)
+        }
+        failure?.let { throw it }
     }
 
     private fun activate(
@@ -399,14 +463,45 @@ private class NativeAudit(
             "Space" -> down(KeyEvent.VK_SPACE)
             else -> physical("keypad-enter" to true)
         }
-        robot.delay(if (hold) 850 else 25)
+        delay(if (hold) 850 else 25)
         if (hold) snap("activation-held")
         when (key) {
             "Return" -> up(KeyEvent.VK_ENTER)
             "Space" -> up(KeyEvent.VK_SPACE)
             else -> physical("keypad-enter" to false)
         }
-        robot.delay(45)
+        delay(45)
+    }
+
+    private fun deliveredMouse(
+        event: MouseEvent,
+        down: Boolean,
+    ) {
+        val binding = event.button to down
+        mouseDeliveries.compute(binding) { _, previous -> Delivery((previous?.count ?: 0) + 1, System.nanoTime()) }
+    }
+
+    private fun mouseButton(
+        mask: Int,
+        down: Boolean,
+    ) {
+        val button =
+            when (mask) {
+                InputEvent.BUTTON1_DOWN_MASK -> MouseEvent.BUTTON1
+                InputEvent.BUTTON2_DOWN_MASK -> MouseEvent.BUTTON2
+                InputEvent.BUTTON3_DOWN_MASK -> MouseEvent.BUTTON3
+                else -> error("Unsupported mouse mask $mask")
+            }
+        val binding = button to down
+        val before = mouseDeliveries[binding]?.count ?: 0
+        val expectPanel = edt { frame.isFocused && panel.isFocusOwner }
+        val began = System.nanoTime()
+        pointer.button(mask, down)
+        if (expectPanel) {
+            await("Native mouse $button/$down delivery") { (mouseDeliveries[binding]?.count ?: 0) > before }
+            val receipt = checkNotNull(mouseDeliveries[binding])
+            inputTimings.add("$currentCase\tmouse-$button\tOS\t$down\t${(receipt.nanos - began) / 1e6}")
+        }
     }
 
     private fun click(
@@ -415,14 +510,17 @@ private class NativeAudit(
         hold: Boolean = false,
     ) {
         val point = actionPoint(id)
-        robot.mouseMove(point.x, point.y)
-        robot.mousePress(button)
-        if (hold) {
-            robot.delay(280)
-            snap("mouse-button-held")
+        pointer.move(point.x, point.y)
+        mouseButton(button, true)
+        try {
+            if (hold) {
+                delay(280)
+                snap("mouse-button-held")
+            }
+        } finally {
+            mouseButton(button, false)
         }
-        robot.mouseRelease(button)
-        robot.delay(70)
+        delay(70)
     }
 
     private fun actionPoint(id: String): java.awt.Point =
@@ -496,7 +594,7 @@ private class NativeAudit(
                     }
                     val before = foxCenter(snap("direction-start"))
                     down(key)
-                    robot.delay(210)
+                    delay(210)
                     val after = foxCenter(snap("direction-held"))
                     up(key)
                     await("Movement stops after release") { edt { abs(panel.game.player.vx) < .01 } }
@@ -523,10 +621,10 @@ private class NativeAudit(
                 val leftName = if (left == KeyEvent.VK_A) "a" else "left"
                 val rightName = if (right == KeyEvent.VK_D) "d" else "right"
                 physical(leftName to true, rightName to true)
-                robot.delay(200)
+                delay(200)
                 check(abs(foxCenter(snap("opposed-held")).first - before) < 12)
                 physical(leftName to false)
-                robot.delay(170)
+                delay(170)
                 check(foxCenter(snap("opposed-release-left")).first > before + 15)
                 physical(rightName to false)
             }
@@ -542,14 +640,14 @@ private class NativeAudit(
             ) {
                 down(first)
                 down(second)
-                robot.delay(120)
+                delay(120)
                 val held = foxCenter(snap("alternate-directions-held")).first
                 up(first)
-                robot.delay(120)
+                delay(120)
                 val remaining = foxCenter(snap("alternate-one-released")).first
                 check((remaining - held) * sign > 15)
                 up(second)
-                robot.delay(180)
+                delay(180)
                 snap("alternate-both-released")
                 check(edt { abs(panel.game.player.vx) < .01 })
             }
@@ -561,23 +659,23 @@ private class NativeAudit(
             case(KeyEvent.getKeyText(key), GameState.PLAYING, "Rise, hold, release-cut, double jump, reject third jump, land and recover") {
                 val groundY = foxCenter(snap("jump-ground")).second
                 down(key)
-                robot.delay(130)
+                delay(130)
                 check(foxCenter(snap("jump-held")).second < groundY - 30)
                 up(key)
-                robot.delay(60)
+                delay(60)
                 snap("jump-released")
                 down(key)
-                robot.delay(40)
+                delay(40)
                 check(edt { panel.game.player.jumpsLeft == 0 && panel.game.player.vy < 0 })
                 snap("jump-second")
                 up(key)
                 tap(key)
                 snap("jump-third-rejected") { check(panel.game.player.jumpsLeft == 0) }
-                robot.delay(1100)
+                delay(1100)
                 snap("jump-landed")
                 check(edt { panel.game.player.grounded && panel.game.player.jumpsLeft == 2 })
                 down(key)
-                robot.delay(1500)
+                delay(1500)
                 snap("jump-held-through-landing")
                 check(edt { panel.game.player.grounded && panel.game.player.jumpsLeft == 2 })
                 up(key)
@@ -585,7 +683,7 @@ private class NativeAudit(
         }
         case("Space + W + Up releases", GameState.PLAYING, "Alternate held jump keys form one jump; only releasing every key cuts it") {
             physical("space" to true, "w" to true, "up" to true)
-            robot.delay(70)
+            delay(70)
             snap("jump-three-bindings")
             check(edt { panel.game.player.jumpsLeft == 1 })
             physical("space" to false, "w" to false)
@@ -615,7 +713,7 @@ private class NativeAudit(
                 snap("gentle-camera-setting")
                 tap(KeyEvent.VK_ESCAPE)
                 // Warm the original middle clearing before measuring its interior camera tracking.
-                robot.delay(250)
+                delay(250)
 
                 fun spikeEdge(image: BufferedImage): Int {
                     // The first visible salmon spike-base strip is an independent world landmark.
@@ -627,7 +725,7 @@ private class NativeAudit(
                 }
                 val before = snap("gentle-camera-before")
                 down(key)
-                robot.delay(140)
+                delay(140)
                 val during = snap("gentle-camera-held")
                 check(abs(foxCenter(during).first - foxCenter(before).first) < 20) { "Gentle camera did not anchor the fox" }
                 check((spikeEdge(during) - spikeEdge(before)) * sign < -15) { "Scenery moved in the wrong direction" }
@@ -658,7 +756,7 @@ private class NativeAudit(
                 }
             }
             val movingBefore = wingMask("wings-moving-before")
-            robot.delay(130)
+            delay(130)
             val movingAfter = wingMask("wings-moving-after")
             check(movingBefore.any { it } && !movingBefore.contentEquals(movingAfter))
             tap(KeyEvent.VK_ESCAPE)
@@ -666,14 +764,14 @@ private class NativeAudit(
             snap("gentle-selected")
             tap(KeyEvent.VK_ESCAPE)
             val stillBefore = wingMask("wings-gentle-before")
-            robot.delay(180)
+            delay(180)
             val stillAfter = wingMask("wings-gentle-after")
             check(stillBefore.any { it } && stillBefore.contentEquals(stillAfter))
             tap(KeyEvent.VK_ESCAPE)
             click("motion")
             tap(KeyEvent.VK_ESCAPE)
             val restoredBefore = wingMask("wings-restored-before")
-            robot.delay(130)
+            delay(130)
             val restoredAfter = wingMask("wings-restored-after")
             check(!restoredBefore.contentEquals(restoredAfter))
         }
@@ -717,12 +815,12 @@ private class NativeAudit(
             val before = wings(if (frozen) "binding-wings-frozen-before" else "binding-wings-animated-before")
             check(before.any { it }) { "Original bat wings are not visibly present" }
             if (frozen) {
-                robot.delay(180)
+                delay(180)
                 val after = wings("binding-wings-frozen-after")
                 check(before.contentEquals(after)) { "This Gentle-motion binding did not freeze the visible bat wings" }
             } else {
                 await("This binding restores visible bat animation") {
-                    robot.delay(80)
+                    delay(80)
                     !before.contentEquals(wings("binding-wings-animated-after"))
                 }
             }
@@ -754,20 +852,20 @@ private class NativeAudit(
                     edt { panel.game.player.reset(Vec(if (direction > 0) 140.0 else 430.0, 536.0)) }
                     if (direction < 0) {
                         tap(KeyEvent.VK_A)
-                        robot.delay(160)
+                        delay(160)
                     }
                     val before = foxCenter(snap("dash-start")).first
                     physical(modifier to true)
-                    robot.delay(270)
+                    delay(270)
                     val after = foxCenter(snap("dash-held")).first
                     check((after - before) * direction > 70)
                     val position = edt { panel.game.player.x }
-                    robot.delay(850)
+                    delay(850)
                     snap("dash-no-auto-repeat")
                     check(abs(edt { panel.game.player.x } - position) < 2)
                     physical(modifier to false)
                     physical(modifier to true)
-                    robot.delay(140)
+                    delay(140)
                     snap("dash-repressed")
                     physical(modifier to false)
                     check((edt { panel.game.player.x } - position) * direction > 70)
@@ -781,12 +879,12 @@ private class NativeAudit(
             "Second physical modifier does not cancel first; releases recover without stuck input",
         ) {
             physical("left-shift" to true, "right-shift" to true)
-            robot.delay(200)
+            delay(200)
             physical("left-shift" to false)
-            robot.delay(700)
+            delay(700)
             snap("right-shift-still-held")
             val x = edt { panel.game.player.x }
-            robot.delay(300)
+            delay(300)
             check(abs(edt { panel.game.player.x } - x) < 2)
             physical("right-shift" to false)
         }
@@ -801,27 +899,27 @@ private class NativeAudit(
                     edt { panel.game.player.reset(Vec(if (direction > 0) 140.0 else 430.0, 536.0)) }
                     if (direction < 0) {
                         tap(KeyEvent.VK_A)
-                        robot.delay(160)
+                        delay(160)
                     }
                     physical(first to true)
-                    robot.delay(900)
+                    delay(900)
                     val before = edt { panel.game.player.x }
                     snap("first-shift-still-held")
                     physical(second to true)
-                    robot.delay(220)
+                    delay(220)
                     snap("second-shift-after-cooldown")
                     check(abs(edt { panel.game.player.x } - before) < 2) { "Second physical Shift retriggered an already held dash" }
                     physical(second to false)
-                    robot.delay(160)
+                    delay(160)
                     snap("opposite-shift-released-first-still-held")
                     check(abs(edt { panel.game.player.x } - before) < 2)
                     physical(second to true)
                     physical(first to false)
-                    robot.delay(160)
+                    delay(160)
                     check(abs(edt { panel.game.player.x } - before) < 2)
                     physical(second to false)
                     physical(second to true)
-                    robot.delay(160)
+                    delay(160)
                     snap("both-shifts-released-then-repressed")
                     check((edt { panel.game.player.x } - before) * direction > 70)
                     check(edt { panel.game.state == GameState.PLAYING && panel.game.deaths == 0 })
@@ -847,13 +945,19 @@ private class NativeAudit(
                 down(KeyEvent.VK_J)
                 await("All ${item.name} projectiles spawn") { edt { panel.game.shots.size == item.angles.size } }
                 snap("weapon-projectile")
-                robot.delay((item.range / item.speed * 1000 + 800).toInt())
+                projectileTravel(item, "weapon-traveled")
+                delay((item.range / item.speed * 1000 + 800).toInt())
                 snap("weapon-held-no-repeat")
                 check(edt { panel.game.shots.isEmpty() })
                 up(KeyEvent.VK_J)
+                await("Fox lands before the repeat-shot jump") { edt { panel.game.player.grounded } }
+                down(KeyEvent.VK_SPACE)
+                await("Repeat-shot jump clears the ground") { edt { panel.game.player.y < 450 } }
                 tap(KeyEvent.VK_J)
+                await("All ${item.name} projectiles respawn after release") { edt { panel.game.shots.size == item.angles.size } }
                 snap("weapon-repress")
-                check(edt { panel.game.shots.isNotEmpty() })
+                projectileTravel(item, "weapon-repress-traveled")
+                up(KeyEvent.VK_SPACE)
             }
         }
         case("J locked", GameState.PLAYING, "Before bow reward, J creates no weapon or projectile") {
@@ -876,13 +980,30 @@ private class NativeAudit(
         }
     }
 
+    private fun projectileTravel(
+        item: Item,
+        label: String,
+    ) {
+        await("${item.name} visibly separates from the fox") {
+            edt {
+                val shots = panel.game.shots
+                shots.size == item.angles.size &&
+                    shots.all {
+                        !it.spent && it.x - panel.game.player.x >= 110 && it.y in 40.0..560.0
+                    }
+            }
+        }
+        // Even the longest spear shaft is now separate from the held weapon and fox.
+        snap(label)
+    }
+
     private fun combinations() {
         for (jump in listOf("space", "w", "up")) {
             for (shift in listOf("left-shift", "right-shift")) {
                 case("$jump + $shift", GameState.PLAYING, "Simultaneous jump/dash produces a jump without spending the dash") {
                     val before = foxCenter(snap("jump-dash-start")).first
                     physical(jump to true, shift to true)
-                    robot.delay(100)
+                    delay(100)
                     val after = foxCenter(snap("jump-dash-together")).first
                     check(abs(after - before) < 12) { "Simultaneous jump also dashed horizontally" }
                     check(edt { panel.game.player.y < 510 && panel.game.player.jumpsLeft == 1 && panel.game.player.dashCooldown == 0.0 })
@@ -898,7 +1019,7 @@ private class NativeAudit(
                 true,
             ) {
                 physical(key to true, "j" to true)
-                robot.delay(70)
+                delay(70)
                 snap("turn-shot") {
                     check(
                         panel.game.shots.isNotEmpty() &&
@@ -912,10 +1033,10 @@ private class NativeAudit(
                 edt { panel.game.player.reset(Vec(if (sign > 0) 140.0 else 430.0, 536.0)) }
                 await("Relocated movement fixture is grounded") { edt { panel.game.player.grounded } }
                 physical(key to true, "space" to true)
-                robot.delay(100)
+                delay(100)
                 snap("moving-jump") { check(panel.game.player.jumpsLeft == 1 && panel.game.player.y < 510) }
                 physical("space" to false, "left-shift" to true)
-                robot.delay(130)
+                delay(130)
                 snap("moving-air-dash") { check(panel.game.player.y < 510 && panel.game.player.facing == sign) }
                 physical(key to false, "left-shift" to false)
             }
@@ -939,10 +1060,10 @@ private class NativeAudit(
                             }
                         if (index == 0) {
                             down(key)
-                            robot.delay(170)
+                            delay(170)
                             val heldFocus = focused()
                             snap("menu-navigation-held")
-                            robot.delay(650)
+                            delay(650)
                             check(focused() == heldFocus) { "Held navigation repeated without release" }
                             up(key)
                         } else {
@@ -962,10 +1083,10 @@ private class NativeAudit(
         }
         case("Tab held", GameState.TITLE, "Holding navigation advances exactly one action, with no native-repeat runaway") {
             down(KeyEvent.VK_TAB)
-            robot.delay(200)
+            delay(200)
             val selected = focused()
             snap("tab-held")
-            robot.delay(900)
+            delay(900)
             check(focused() == selected)
             up(KeyEvent.VK_TAB)
             tap(KeyEvent.VK_TAB)
@@ -1000,7 +1121,7 @@ private class NativeAudit(
         }
         case("Space held through Start", GameState.TITLE, "Held activation cannot turn into an automatic jump when the run begins") {
             down(KeyEvent.VK_SPACE)
-            robot.delay(1100)
+            delay(1100)
             snap("start-space-held")
             check(edt { panel.game.state == GameState.PLAYING && panel.game.player.grounded && panel.game.player.jumpsLeft == 2 })
             up(KeyEvent.VK_SPACE)
@@ -1036,7 +1157,8 @@ private class NativeAudit(
                 for (id in listOf("sound", "motion")) {
                     val expected =
                         if (id == "motion") {
-                            "This binding toggles Gentle motion; gameplay wings visibly freeze, then animate after the same binding restores it"
+                            "This binding toggles Gentle motion; gameplay wings visibly freeze, " +
+                                "then animate after the same binding restores it"
                         } else {
                             "Focused setting changes its visible on/off label and restores on second activation"
                         }
@@ -1090,15 +1212,15 @@ private class NativeAudit(
                     val age = edt { panel.game.level.age }
                     val retry = edt { panel.game.respawnLeft }
                     down(key)
-                    robot.delay(1000)
+                    delay(1000)
                     snap("resume-held")
                     check(edt { panel.game.state == state })
                     up(key)
                     tap(key)
-                    robot.delay(200)
+                    delay(200)
                     check(edt { panel.game.state == GameState.PAUSED })
                     val stopped = edt { panel.game.level.age }
-                    robot.delay(200)
+                    delay(200)
                     check(edt { panel.game.level.age == stopped })
                     if (state == GameState.RESPAWNING) check(edt { panel.game.respawnLeft < retry }) else check(stopped >= age)
                 }
@@ -1110,10 +1232,10 @@ private class NativeAudit(
             "One retry per held press, visible hurt, return to camp, then another retry after release",
         ) {
             down(KeyEvent.VK_R)
-            robot.delay(100)
+            delay(100)
             snap("retry-hurt")
             check(edt { panel.game.state == GameState.RESPAWNING && panel.game.deaths == 1 })
-            robot.delay(1200)
+            delay(1200)
             snap("retry-return-held")
             check(edt { panel.game.state == GameState.PLAYING && panel.game.deaths == 1 && panel.game.player.x == 140.0 })
             up(KeyEvent.VK_R)
@@ -1124,7 +1246,7 @@ private class NativeAudit(
             case("M", state, "Global sound toggles once per held press; second press restores it (actual output checked separately)") {
                 val previous = edt { panel.settings.muted }
                 down(KeyEvent.VK_M)
-                robot.delay(850)
+                delay(850)
                 snap("mute-held")
                 check(edt { panel.settings.muted != previous && panel.audio.muted != previous })
                 up(KeyEvent.VK_M)
@@ -1146,7 +1268,7 @@ private class NativeAudit(
                 ) {
                     val position = edt { panel.game.player.position }
                     down(key)
-                    robot.delay(150)
+                    delay(150)
                     snap("unavailable-held")
                     up(key)
                     tap(key)
@@ -1161,7 +1283,7 @@ private class NativeAudit(
                 case("Right Shift unavailable", state, "Right modifier alone cannot dash or change menus outside gameplay") {
                     val position = edt { panel.game.player.position }
                     physical("right-shift" to true)
-                    robot.delay(150)
+                    delay(150)
                     snap("right-shift-unavailable")
                     physical("right-shift" to false)
                     check(edt { panel.game.state == state && panel.game.player.position == position })
@@ -1329,12 +1451,12 @@ private class NativeAudit(
                             val p = panel.locationOnScreen
                             java.awt.Point(p.x + panel.width * 3 / 4, p.y + panel.height / 2)
                         }
-                    robot.mouseMove(point.x, point.y)
+                    pointer.move(point.x, point.y)
                     val beforeWheel = edt { wheelEvents }
                     val started = System.nanoTime()
                     // CRobot.m sends its argument directly as Quartz delta, whose positive sign
                     // means up; CPlatformResponder negates it for Java's down-positive rotation.
-                    robot.mouseWheel(if (macOS) -rotation else rotation)
+                    pointer.wheel(rotation)
                     await("Native wheel event") { edt { wheelEvents > beforeWheel } }
                     val actualRotation = edt { lastWheelRotation }
                     check(actualRotation * rotation > 0) { "Wheel direction: requested $rotation, delivered $actualRotation" }
@@ -1362,7 +1484,7 @@ private class NativeAudit(
             ) {
                 val key = ordinary.firstOrNull { KeyEvent.getKeyText(it) == binding }
                 if (key != null) down(key) else physical(binding to true)
-                robot.delay(80)
+                delay(80)
                 val other =
                     edt {
                         JFrame("Emberwood audit focus").apply {
@@ -1373,25 +1495,32 @@ private class NativeAudit(
                             requestFocus()
                         }
                     }
+                var registered = false
                 try {
                     await("Auxiliary window receives focus") { edt { other.isFocused } }
+                    pointer.registerAuxiliary(other.title)
+                    registered = true
                     check(edt { panel.game.state == GameState.PAUSED }) { "OS focus change did not pause" }
                     if (key != null) up(key) else physical(binding to false)
                 } finally {
-                    edt {
-                        other.dispose()
-                        frame.toFront()
-                        panel.requestFocusInWindow()
+                    try {
+                        if (registered) pointer.unregisterAuxiliary(other.title)
+                    } finally {
+                        edt {
+                            other.dispose()
+                            frame.toFront()
+                            panel.requestFocusInWindow()
+                        }
                     }
                 }
                 await("Game window regains focus") { edt { frame.isFocused && panel.isFocusOwner } }
                 snap("focus-return-paused")
                 check(edt { panel.game.state == GameState.PAUSED })
                 tap(KeyEvent.VK_ESCAPE)
-                robot.delay(1400)
+                delay(1400)
                 snap("focus-recovered")
                 val x = edt { panel.game.player.x }
-                robot.delay(180)
+                delay(180)
                 check(
                     edt {
                         panel.game.state == GameState.PLAYING &&
@@ -1415,14 +1544,15 @@ private class NativeAudit(
                     val origin = panel.locationOnScreen
                     java.awt.Point(origin.x + panel.width - 30, origin.y + 30)
                 }
-            robot.mouseMove(blank.x, blank.y)
+            pointer.move(blank.x, blank.y)
             val before = snap("mouse-focus-before").getRGB(366, 327)
             val muted = edt { panel.settings.muted }
             val point = actionPoint("sound")
             var other: JFrame? = null
+            var registered = false
             var held = true
-            robot.mouseMove(point.x, point.y)
-            robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+            pointer.move(point.x, point.y)
+            mouseButton(InputEvent.BUTTON1_DOWN_MASK, true)
             try {
                 snap("mouse-focus-held")
                 check(edt { panel.settings.muted != muted })
@@ -1439,16 +1569,22 @@ private class NativeAudit(
                         }
                     }
                 await("Mouse-release target receives focus") { edt { other.isFocused } }
-                robot.mouseMove(blank.x, blank.y)
-                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+                pointer.registerAuxiliary(other.title)
+                registered = true
+                pointer.move(blank.x, blank.y)
+                mouseButton(InputEvent.BUTTON1_DOWN_MASK, false)
                 held = false
                 snap("mouse-released-unfocused")
             } finally {
-                if (held) robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
-                edt {
-                    other?.dispose()
-                    frame.toFront()
-                    panel.requestFocusInWindow()
+                try {
+                    if (held) mouseButton(InputEvent.BUTTON1_DOWN_MASK, false)
+                    if (registered) pointer.unregisterAuxiliary(checkNotNull(other).title)
+                } finally {
+                    edt {
+                        other?.dispose()
+                        frame.toFront()
+                        panel.requestFocusInWindow()
+                    }
                 }
             }
             await("Game regains focus after mouse release") { edt { frame.isFocused && panel.isFocusOwner } }
@@ -1497,7 +1633,7 @@ private class NativeAudit(
         snap("window-before-close")
         val muted = edt { panel.settings.muted }
         edt { frame.dispatchEvent(java.awt.event.WindowEvent(frame, java.awt.event.WindowEvent.WINDOW_CLOSING)) }
-        robot.delay(300)
+        delay(300)
         val closed = edt { !frame.isDisplayable }
         val persisted = Settings(preferences).muted == muted
         val result = if (closed && persisted) "PASS automatic" else "FAIL"

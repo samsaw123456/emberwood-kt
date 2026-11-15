@@ -7,7 +7,7 @@ class NativeFocusUnavailable(RuntimeError):
     pass
 
 
-def require_game_window(pid):
+def require_game_window(pid, title="Emberwood Kotlin"):
     services = ctypes.CDLL(
         "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
     )
@@ -132,7 +132,7 @@ def require_game_window(pid):
             "frontmost": True,
             "role": "AXWindow",
             "subrole": "AXStandardWindow",
-            "title": "Emberwood Kotlin",
+            "title": title,
             "modal": False,
             "attached_sheets": 0,
         }:

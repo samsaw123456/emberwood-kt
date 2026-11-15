@@ -10,6 +10,7 @@ import select
 import subprocess
 import tempfile
 import time
+from contextlib import ExitStack
 from pathlib import Path
 
 from audio_audit import audit_states, read_pcm
@@ -67,6 +68,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("build/audio-audit-macos"))
     parser.add_argument(
+        "--app",
+        type=Path,
+        help="Configured disposable native AudioStateFixture app; launch through LaunchServices",
+    )
+    parser.add_argument(
         "--java", type=Path, help="Java executable; defaults to JAVA_HOME/bin/java"
     )
     parser.add_argument(
@@ -81,8 +87,15 @@ def main():
         parser.error("Run this native output audit on macOS.")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    java = (args.java or Path(os.environ["JAVA_HOME"]) / "bin/java").resolve()
-    jar = args.jar.resolve()
+    native_app = args.app.resolve() if args.app else None
+    java = (
+        native_app / "Contents/runtime/Contents/Home/bin/java"
+        if native_app
+        else args.java or Path(os.environ["JAVA_HOME"]) / "bin/java"
+    ).resolve()
+    jar = (
+        native_app / "Contents/app/emberwood-kotlin.jar" if native_app else args.jar
+    ).resolve()
     classes = ROOT / "build/classes/kotlin/test"
     if not java.is_file() or not jar.is_file() or not classes.is_dir():
         parser.error(
@@ -96,6 +109,9 @@ def main():
         "java_executable": str(java),
         "game_jar": str(jar),
         "diagnostic_output_mixer": args.output_mixer,
+        "launch_method": "LaunchServices native app"
+        if native_app
+        else "raw Java executable",
         "result": "UNVERIFIED",
         "reason": "Native capture helper has not completed",
     }
@@ -211,30 +227,36 @@ def main():
     with (
         tempfile.TemporaryDirectory(prefix="emberwood-mac-audio-") as data,
         (output / "app.log").open("w") as log,
+        ExitStack() as application,
     ):
-        app = subprocess.Popen(
-            [
-                java,
-                "-Xms32m",
-                "-Xmx256m",
-                "--enable-native-access=ALL-UNNAMED",
-                *(
-                    [f"-Djavax.sound.sampled.SourceDataLine=#{args.output_mixer}"]
-                    if args.output_mixer
-                    else []
-                ),
-                "-cp",
-                os.pathsep.join((str(jar), str(classes))),
-                "emberwood.AudioStateFixture",
-                "--data-dir",
-                data,
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=log,
-            text=True,
-            bufsize=1,
-        )
+        if native_app:
+            from mac_app_stdio import NativeAppProcess
+
+            app = application.enter_context(NativeAppProcess(native_app, data, output))
+        else:
+            app = subprocess.Popen(
+                [
+                    java,
+                    "-Xms32m",
+                    "-Xmx256m",
+                    "--enable-native-access=ALL-UNNAMED",
+                    *(
+                        [f"-Djavax.sound.sampled.SourceDataLine=#{args.output_mixer}"]
+                        if args.output_mixer
+                        else []
+                    ),
+                    "-cp",
+                    os.pathsep.join((str(jar), str(classes))),
+                    "emberwood.AudioStateFixture",
+                    "--data-dir",
+                    data,
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=log,
+                text=True,
+                bufsize=1,
+            )
         summary["game_pid"] = app.pid
         try:
             audit_states(

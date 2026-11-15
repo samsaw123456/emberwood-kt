@@ -46,12 +46,46 @@ internal object NativeAuditTools {
     }
 
     private class CaptureSession : AutoCloseable {
-        private val process = bridge("capture-serve").redirectError(ProcessBuilder.Redirect.INHERIT).start()
+        private val session = BridgeSession("capture-serve")
+
+        fun capture(
+            bounds: Rectangle,
+            file: Path,
+        ): BufferedImage {
+            require(bounds.width > 0 && bounds.height > 0)
+            Files.createDirectories(file.parent)
+            Files.deleteIfExists(file)
+            val reply = session.request("[${bounds.x},${bounds.y},${bounds.width},${bounds.height},${quote(file.toString())}]")
+            check(reply == "OK") { "External window capture failed: $reply" }
+            val image = checkNotNull(ImageIO.read(file.toFile())) { "External controller returned no readable image" }
+            check(image.width == bounds.width && image.height == bounds.height) {
+                "External capture size ${image.width}x${image.height} differs from requested ${bounds.width}x${bounds.height}"
+            }
+            return image
+        }
+
+        override fun close() = session.close()
+    }
+
+    fun quote(value: String): String =
+        value.toCharArray().joinToString("", "\"", "\"") { char ->
+            when {
+                char == '\\' -> "\\\\"
+                char == '"' -> "\\\""
+                char.code < 32 -> "\\u%04x".format(char.code)
+                else -> char.toString()
+            }
+        }
+
+    internal class BridgeSession(
+        private val mode: String,
+    ) : AutoCloseable {
+        private val process = bridge(mode).redirectError(ProcessBuilder.Redirect.INHERIT).start()
         private val input = process.outputStream.bufferedWriter()
         private val output = process.inputStream.bufferedReader()
         private val replies = LinkedBlockingQueue<String>()
         private val reader =
-            Thread.ofPlatform().daemon(true).name("native-capture-replies").start {
+            Thread.ofPlatform().daemon(true).name("native-$mode-replies").start {
                 try {
                     output.forEachLine { replies.put(it) }
                 } catch (error: IOException) {
@@ -63,51 +97,31 @@ internal object NativeAuditTools {
 
         init {
             try {
-                check(response(10_000) == "READY") { "External capture controller did not become ready" }
+                check(response(10_000) == "READY") { "External $mode controller did not become ready" }
             } catch (error: Throwable) {
                 process.destroyForcibly()
                 throw error
             }
         }
 
-        fun capture(
-            bounds: Rectangle,
-            file: Path,
-        ): BufferedImage {
-            require(bounds.width > 0 && bounds.height > 0)
-            Files.createDirectories(file.parent)
-            Files.deleteIfExists(file)
-            val path =
-                file.toString().toCharArray().joinToString("", "\"", "\"") { char ->
-                    when {
-                        char == '\\' -> "\\\\"
-                        char == '"' -> "\\\""
-                        char.code < 32 -> "\\u%04x".format(char.code)
-                        else -> char.toString()
-                    }
-                }
-            input.write("[${bounds.x},${bounds.y},${bounds.width},${bounds.height},$path]")
+        @Synchronized
+        fun request(message: String): String {
+            input.write(message)
             input.newLine()
             input.flush()
-            val reply = response(5_000)
-            check(reply == "OK") { "External window capture failed: $reply" }
-            val image = checkNotNull(ImageIO.read(file.toFile())) { "External controller returned no readable image" }
-            check(image.width == bounds.width && image.height == bounds.height) {
-                "External capture size ${image.width}x${image.height} differs from requested ${bounds.width}x${bounds.height}"
-            }
-            return image
+            return response(5_000)
         }
 
         private fun response(timeoutMillis: Long): String =
             checkNotNull(replies.poll(timeoutMillis, TimeUnit.MILLISECONDS)) {
-                "External capture controller did not respond within ${timeoutMillis}ms"
+                "External $mode controller did not respond within ${timeoutMillis}ms"
             }
 
         override fun close() {
             try {
                 input.close()
-                check(process.waitFor(3, TimeUnit.SECONDS)) { "External capture controller did not stop after EOF" }
-                check(process.exitValue() == 0) { "External capture controller exited with ${process.exitValue()}" }
+                check(process.waitFor(3, TimeUnit.SECONDS)) { "External $mode controller did not stop after EOF" }
+                check(process.exitValue() == 0) { "External $mode controller exited with ${process.exitValue()}" }
             } finally {
                 if (process.isAlive) process.destroyForcibly()
                 output.close()

@@ -15,9 +15,11 @@ from pathlib import Path
 
 from mac_game_focus import require_game_window
 from mac_game_window import GameWindow
+from mac_pointer import NativePointer
 from physical_key import NativeKeys, parse_events
 
 ROOT = Path(__file__).resolve().parents[1]
+AUXILIARY_TITLES = {"Emberwood audit focus", "Emberwood mouse focus audit"}
 
 
 class Controller:
@@ -28,6 +30,8 @@ class Controller:
         guard=require_game_window,
         windows=None,
         keys_factory=NativeKeys,
+        pointer_factory=NativePointer,
+        auxiliary_guard=None,
     ):
         self.output, self.executable = output.resolve(), executable.resolve()
         self.guard, self.windows, self.keys_factory = (
@@ -36,9 +40,13 @@ class Controller:
             keys_factory,
         )
         self.pid = None
+        self.pointer_factory = pointer_factory
+        self.auxiliary_guard = auxiliary_guard or require_game_window
+        self.auxiliary_windows = {}
         self.guarded = False
         self.lock = threading.Lock()
         self.keyboard = threading.Lock()
+        self.pointer = threading.Lock()
         self.capture_lock = threading.Lock()
         self.connections = set()
         self.sessions = set()
@@ -114,7 +122,7 @@ class Controller:
                 "Capture output must be a PNG inside this audit's output directory"
             )
         self.windows.facilities()
-        window = self.windows.find(pid)
+        window = self.windows.find(pid, title="Emberwood Kotlin")
         if rectangle is not None:
             if len(rectangle) != 4 or any(
                 type(value) is not int for value in rectangle
@@ -195,8 +203,9 @@ class Controller:
                 log.write(json.dumps(record) + "\n")
 
     def handle(self, handler):
-        native, mode, pid = None, None, None
+        native, pointer, mode, pid = None, None, None, None
         owns_keyboard = False
+        owns_pointer = False
         done = threading.Event()
         with self.lock:
             self.connections.add(handler.request)
@@ -210,6 +219,7 @@ class Controller:
                 "keys",
                 "capture",
                 "capture-serve",
+                "pointer-serve",
             }:
                 raise ValueError("Invalid test-controller request")
             self.identify(pid)
@@ -225,11 +235,27 @@ class Controller:
                     )
                 native = self.keys_factory()
                 native.trace = str(self.output / "external-physical-key-delivery.jsonl")
+            if mode == "pointer-serve":
+                owns_pointer = self.pointer.acquire(blocking=False)
+                if not owns_pointer:
+                    raise RuntimeError(
+                        "A native pointer test connection is already active"
+                    )
+
+                def receipt(row):
+                    with (self.output / "external-pointer-delivery.jsonl").open(
+                        "a"
+                    ) as log:
+                        log.write(json.dumps({"pid": pid, **row}) + "\n")
+
+                pointer = self.pointer_factory(receipt=receipt)
             if mode == "capture":
                 requests = [request["capture"]]
             else:
                 handler.wfile.write(b"READY\n")
-                handler.request.settimeout(1900 if mode == "capture-serve" else 120)
+                handler.request.settimeout(
+                    1900 if mode in {"capture-serve", "pointer-serve"} else 120
+                )
                 requests = iter(lambda: handler.rfile.readline(4096), b"")
             for line in requests:
                 if mode == "keys":
@@ -241,6 +267,8 @@ class Controller:
                             )
                         self.verify_window(pid)
                     native.send(events)
+                elif mode == "pointer-serve":
+                    self.pointer_request(pid, pointer, json.loads(line))
                 else:
                     if not self.guarded:
                         raise RuntimeError(
@@ -260,6 +288,7 @@ class Controller:
             RuntimeError,
             ValueError,
             KeyError,
+            TypeError,
             subprocess.SubprocessError,
         ) as error:
             reason = f"{type(error).__name__}: {error}".replace("\n", " ")
@@ -273,15 +302,107 @@ class Controller:
             try:
                 if native:
                     native.close(release=True)
+                if pointer:
+                    pointer.close(release=True)
             except (OSError, RuntimeError) as error:
                 self.cleanup_errors.append(str(error))
             finally:
                 if owns_keyboard:
                     self.keyboard.release()
+                if owns_pointer:
+                    self.auxiliary_windows.clear()
+                    self.pointer.release()
                 with self.lock:
                     self.connections.discard(handler.request)
                     self.sessions.discard(done)
                 done.set()
+
+    def pointer_request(self, pid, pointer, request):
+        if not self.guarded:
+            raise RuntimeError("Pointer input requires the same PID's startup guard")
+        self.identify(pid)
+        if not isinstance(request, list) or not request:
+            raise ValueError("Pointer request must be a non-empty JSON array")
+        command = request[0]
+        if not isinstance(command, str):
+            raise TypeError("Pointer operation name must be text")
+        if command in {"register-aux", "unregister-aux"}:
+            if (
+                len(request) != 2
+                or not isinstance(request[1], str)
+                or request[1] not in AUXILIARY_TITLES
+            ):
+                raise ValueError("Unsupported auxiliary audit window")
+            title = request[1]
+            if command == "unregister-aux":
+                if title not in self.auxiliary_windows:
+                    raise RuntimeError("Auxiliary audit window was not registered")
+                del self.auxiliary_windows[title]
+            else:
+                self.auxiliary_guard(pid, title)
+                window = self.windows.find(pid, title=title)
+                self.auxiliary_windows[title] = window["id"]
+            return
+        if (
+            command == "move"
+            and len(request) == 3
+            and all(type(v) is int for v in request[1:])
+        ):
+            self.pointer_focus(pid, allow_auxiliary=True)
+            self.require_point_in_game(pid, request[1:])
+            pointer.move(*request[1:])
+        elif (
+            command == "button"
+            and len(request) == 3
+            and isinstance(request[1], str)
+            and request[1] in {"left", "middle", "right"}
+            and type(request[2]) is bool
+        ):
+            if request[2]:
+                self.verify_window(pid)
+                self.require_point_in_game(pid, pointer.position())
+            elif request[1] not in pointer.held:
+                raise RuntimeError(
+                    "Cannot release a pointer button this test session did not press"
+                )
+            # Releases are cleanup, never a new activation; allow them even if focus changes unexpectedly.
+            pointer.button(request[1], request[2])
+        elif (
+            command == "wheel"
+            and len(request) == 2
+            and type(request[1]) is int
+            and 0 < abs(request[1]) <= 20
+        ):
+            self.verify_window(pid)
+            self.require_point_in_game(pid, pointer.position())
+            pointer.wheel(request[1])
+        else:
+            raise ValueError("Invalid native pointer operation")
+
+    def require_point_in_game(self, pid, position):
+        x, y = position
+        left, top, width, height = self.windows.find(pid, title="Emberwood Kotlin")[
+            "bounds"
+        ]
+        if not (left <= x < left + width and top <= y < top + height):
+            raise RuntimeError("Pointer position lies outside the exact game window")
+
+    def pointer_focus(self, pid, allow_auxiliary=False):
+        try:
+            self.guard(pid)
+            return
+        except RuntimeError as original:
+            if allow_auxiliary:
+                for title, identifier in self.auxiliary_windows.items():
+                    try:
+                        self.auxiliary_guard(pid, title)
+                        if self.windows.find(pid, title=title)["id"] == identifier:
+                            return
+                    except RuntimeError:
+                        continue
+            raise RuntimeError(
+                "Pointer move has no verified main or registered auxiliary focus"
+            ) from original
 
     def close(self):
         if self.closed:
@@ -372,7 +493,9 @@ def proxy(mode, path, pid, capture=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("guard", "keys", "capture", "capture-serve"))
+    parser.add_argument(
+        "mode", choices=("guard", "keys", "capture", "capture-serve", "pointer-serve")
+    )
     parser.add_argument("socket", type=Path)
     parser.add_argument("pid", type=int)
     parser.add_argument("capture", nargs="*")
