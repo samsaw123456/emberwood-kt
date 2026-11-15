@@ -94,10 +94,17 @@ data class MenuAction(
 
 class GamePanel(
     val settings: Settings,
+    val audio: Audio = Audio(),
 ) : JPanel(),
     AutoCloseable {
     val game = Game()
-    val audio = Audio()
+    private val soundStatus
+        get() =
+            when {
+                audio.unavailable != null -> "unavailable"
+                settings.muted -> "off"
+                else -> "on"
+            }
     private val renderer = WorldRenderer()
     val actions = mutableListOf<MenuAction>()
     var focusIndex = 0
@@ -376,14 +383,13 @@ class GamePanel(
         }
 
         fun settingsButtons(y: Double) {
+            val status = soundStatus
             action(
                 "sound",
-                if (audio.unavailable !=
-                    null
-                ) {
+                if (status == "unavailable") {
                     "Sound unavailable"
                 } else {
-                    "Sound: ${if (settings.muted) "off" else "on"}"
+                    "Sound: $status"
                 },
                 360.0,
                 y,
@@ -514,7 +520,7 @@ class GamePanel(
         band(g, 0, 588, 1152, 60)
         if (game.state !in MENU_STATES) {
             text(g, "A/D or ←/→: move    Space / W / ↑: jump twice    Shift: dash    J: weapon", 24, 611, 16)
-            text(g, "R: retry    Esc / P: gear or pause    M: sound ${if (settings.muted) "off" else "on"}", 24, 637, 16)
+            text(g, "R: retry    Esc / P: gear or pause    M: sound $soundStatus", 24, 637, 16)
             text(g, if (game.player.jumpsLeft > 0) "Air jump ready" else "Land to jump again", 920, 611, 15)
         }
         game.boss?.takeIf { it.engaged && !it.defeated }?.let { boss ->
@@ -629,7 +635,7 @@ class GamePanel(
         }
         val soundHint =
             if (game.state == GameState.CHAPTER_COMPLETE || game.state == GameState.WON) {
-                "    M: sound ${if (settings.muted) "off" else "on"}"
+                "    M: sound $soundStatus"
             } else {
                 ""
             }
