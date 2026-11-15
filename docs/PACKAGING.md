@@ -1,5 +1,12 @@
 # Native packages and toolchains
 
+The current candidate JAR is
+`375ae22702bfc62711180138abc3b01ef309339cd636cdfa0d170b8b04e0c0fd`.
+It [failed macOS startup on both architectures](https://github.com/samsaw123456/emberwood-kt/actions/runs/43745233648)
+before any control cases ran and cannot ship. The `7d9668ed` evidence and staged
+archives below are retained baseline results, not verification of this candidate.
+Publication remains pending a passing build and the required native reviews.
+
 The source launcher provisions Temurin **25.0.5+8** into a private cache, with
 four platform/architecture URLs and SHA-256 hashes pinned in
 `tools/jdk-downloads.tsv`. `EMBERWOOD_JAVA_HOME` can select another complete JDK
@@ -113,7 +120,7 @@ so that container proof applies to the current packages. Receipts are under
 
 ## Current Linux package and launcher evidence
 
-The current game JAR is
+The retained Linux baseline game JAR is
 `7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
 The four Linux release candidates come unchanged from
 [run 43725301448](https://github.com/samsaw123456/emberwood-kt/actions/runs/43725301448).

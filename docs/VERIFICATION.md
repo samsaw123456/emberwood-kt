@@ -41,16 +41,40 @@ desktop mix. Java audio flags alone do not satisfy this check.
 
 ## Current evidence
 
-The current runnable JAR is
+The current candidate JAR is
+`375ae22702bfc62711180138abc3b01ef309339cd636cdfa0d170b8b04e0c0fd`.
+It removes the unused macOS Services submenu through public AppKit APIs before
+showing the window. Formatting, checks and all **67 Kotlin/JVM tests** pass,
+including seven menu-identity/native-callback regressions. Native run43745233648
+fails before input on both Mac architectures: exact parent-item removal returns,
+but the post-clear `servicesMenu` getter remains nonnull. Both audits execute
+zero cases; the subsequent strict menu probe is skipped. Owned cleanup leaves
+no game window or modal, without signals. The Intel cleanup original was
+inspected at full size; evidence is
+`build/ci-controls-menu-candidate-375ae227-macos-intel/build/controls-capture-native-app/review/native-review.json`.
+An observation-only native probe will distinguish retained versus recreated
+registration and actual menu attachment. The candidate is not accepted as a fix;
+first-arrow, menu and final-build validation remain open.
+The current full tools suite passes **188 Python tests** (two macOS SDK tests
+skipped on Linux); Ruff and formatting pass for all 57 Python files.
+An isolated Linux candidate regression also passed six physical cases with exit 0:
+A/Left, D/Right, Return and lifecycle. All 25 referenced frames plus startup were
+inspected, including the original 800×600 resized image. Exact evidence:
+`build/audit-menu-candidate-375ae227-linux/review/native-review.json`.
+This limited check does not replace the candidate's complete inventory.
+
+The retained audit baseline below is
 `7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
 It fixes the reproduced same-step jump release/re-press defect. Formatting,
-checks and all **60 Kotlin/JVM tests** pass; the three failing pre-fix regressions
+checks and its **60 Kotlin/JVM tests** passed; the three failing pre-fix regressions
 and green repeat remain in `build/regressions/jump-order/`. The full tools suite
-at `f095925` ran 181 Python tests successfully
+at that earlier `f095925` checkpoint ran 181 Python tests successfully
 (two macOS SDK tests skipped on Linux). Ruff checks and all 55 file-format
 checks, ShellCheck and the 2,107-asset integrity
 check pass. The actual Mac SDK checks run separately on their native hosts, including the
 new stream-buffer/PNG diagnostic fixture explicitly included in CI.
+The retained platform passes below apply to that baseline, not automatically to
+the new menu candidate.
 
 - Linux x64 source and bundled controls: **280/280 passed per runtime** with
   exit 0, all 1,214 referenced frames independently inspected, and exact disjoint
@@ -209,12 +233,26 @@ new stream-buffer/PNG diagnostic fixture explicitly included in CI.
   `build/ci-opengl-7d9668ed-macos-intel/build/controls-capture-native-app/review/native-review.json`.
   The production launcher and rendering flags remain unchanged; no full
   280-command pass is inferred from this diagnostic.
-- Two bounded ordinary-Main observations at `f095925` are pending:
-  43743028454 keeps the held snapshot, while 43743043450 uses the independent
-  stream throughout the hold and early recovery. Both collect a native stack
-  sample spanning the first Left input. The stream-only route must still prove
-  held movement and early release from actual frame timestamps; it cannot
-  substitute a late frame or wall stop for recovery. Neither changes the game.
+- Ordinary-Main stream-only run 43743043450 identifies a native wait during
+  the first Left failure: all 568 AppKit main-thread samples are inside
+  Services-menu population; 560 wait synchronously for a VoiceShortcutClient
+  XPC reply. The physical Left release is acknowledged after 357.015 ms, but
+  the native image freezes and later reaches the boundary. No synchronous
+  window queries run during the held/early-release interval. The live sample
+  is retained at
+  `build/ci-main-stream-sampled-7d9668ed-macos-intel/build/main-movement-native-app/live-sample.txt`.
+  A focused Mac-only candidate removes the unused Services submenu through
+  public AppKit APIs; native validation and affected final-build checks are
+  still required. No corrected-game pass is inferred from source review.
+- Snapshot observation 43743028454 failed its unchanged 50 ms release limit
+  during D preparation (52.838 ms late). Retry 43743527267 failed during Return:
+  OS-up acknowledgement arrived 51.580 ms after its deadline, although up was
+  posted only 8.579 ms late. Neither reached Left, streaming or live sampling.
+  All four and three original frames respectively were inspected; the latter
+  visibly starts the level before the timing guard aborts. Both preserve owned
+  SIGTERM cleanup rather than physical Quit proof. Exact journals:
+  `build/ci-main-snapshot-sampled-7d9668ed-macos-intel/build/main-movement-native-app/independent-review/review.json`
+  and `build/ci-main-snapshot-sampled-repeat-7d9668ed-macos-intel/build/main-movement-native-app/independent-review/review.json`.
 
 ## Earlier evidence
 

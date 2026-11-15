@@ -2,16 +2,21 @@
 
 ## Current validation status
 
-The current JAR is
-`7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
-It fixes release-then-press ordering for a new jump within one simulation tick.
-All 58 unit tests and a focused nine-case physical-input audit pass. Current
-output verification is complete on Linux x86-64/ARM64 and native Mac Intel/ARM64:
-84 physical cases and 504 original WAVs across the six measured routes. Complete
-Intel control review is still pending. The historical record retains earlier
-proof with its original build identity.
+The current candidate JAR is
+`375ae22702bfc62711180138abc3b01ef309339cd636cdfa0d170b8b04e0c0fd`.
+It changes native macOS application-menu preparation. Its 67 unit tests pass;
+fresh physical output and full native control validation remain pending.
 
-| Current build and evidence | Physical sound controls | Continuity finding |
+The retained audio evidence below belongs to baseline JAR
+`7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
+That build fixed release-then-press ordering for a new jump within one simulation
+tick. Its output verification completed on Linux x86-64/ARM64 and native Mac Intel/ARM64:
+84 physical cases and 504 original WAVs across the six measured routes. Complete
+Intel control review remained unfinished. None of those recordings is relabeled
+as candidate output proof. The historical record retains still earlier evidence
+with its original build identity.
+
+| Retained 7d9668ed build and evidence | Physical sound controls | Continuity finding |
 | --- | --- | --- |
 | Linux x86-64, source and bundle, run 43725301448 | 14/14 per route; all 168 WAVs independently checked | No interior exact-zero span of at least 2 ms |
 | Linux ARM64, source and bundle, run 43725301448 | 14/14 per route; all 168 WAVs independently checked | One packaged title mute cutoff has a 10.667 ms zero interval followed by a 1.583 ms residual tail; all uninterrupted cues are intact |

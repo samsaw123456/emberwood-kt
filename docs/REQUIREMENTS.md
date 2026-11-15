@@ -31,8 +31,13 @@ Current assessment: final cross-platform verification remains open.
 
 Build `7d9668ed` fixes the observed same-step jump release/re-press ordering
 fault. Seven actual-handler regressions pass (three failed on the old code),
-and the full 60-test suite passes. Earlier build evidence is preserved separately;
-no pass is silently transferred across runnable game hashes.
+and its full 60-test suite passed. Candidate `375ae227` additionally removes the
+unused native Services menu on macOS and passes 67 automated tests. Both native
+Mac startup trials fail its post-clear registration check before input; an
+observation-only probe is pending. First-arrow and final-build checks remain
+open; the table below retains
+the audited baseline's scope. No pass is silently transferred across runnable
+game hashes.
 
 | Area | Evidence and remaining work |
 | --- | --- |
@@ -43,7 +48,7 @@ no pass is silently transferred across runnable game hashes.
 | State | Pause, restart, checkpoint gear, boss persistence, settings and held/focus cleanup have automated and native coverage. Final Linux source/bundle closes physically on both architectures; both macOS ARM native launch routes pass physical Command-Q and complete control review. |
 | Feel/accessibility | Original assets/fonts, keyboard focus, alternate keys and Gentle motion preserved. All eight Gentle menu bindings prove visible animation freeze/restoration. Final Linux audio passes on both CPUs and both macOS architectures pass fourteen actual PCM cases; unavailable-output six-state feedback separately inspected. |
 | Polish | All 2,107 migrated resources are hash-verified. Final native campaign, every Linux source/bundle inventory frame on both CPUs and all macOS ARM control frames inspected. No generic marketing interface added; Intel visual review remains explicit. |
-| Robustness/performance | Final Linux CI profiles and installer/runtime routes pass on both architectures; macOS ARM source and bundled profiles pass. Intel's first profile retained a failed 40.729 Java paints/second boss window; the repeat passed both Java-paint throughput profiles. These are not continuous native presentation-rate measurements. Repeated Intel Left checks fail, including ordinary Main in run 43741464146 with an independently bounded 357 ms hold: the own-window stream has a 3.123 s publication gap and then shows the fox at the left boundary. Scheduled repaint, disabled buffering and OpenGL did not correct the failure. Native input, window-query and presentation causes remain under investigation; complete Intel rendered controls remain open. Its independent fourteen-case audio repeat passes. Source offline cache, install/upgrade/remove and actual Zed task loading have evidence; fresh Ubuntu dependency recovery is separately recorded. |
+| Robustness/performance | Final Linux CI profiles and installer/runtime routes pass on both architectures; macOS ARM source and bundled profiles pass. Intel's first profile retained a failed 40.729 Java paints/second boss window; the repeat passed both Java-paint throughput profiles. These are not continuous native presentation-rate measurements. Repeated Intel Left checks fail, including ordinary Main in run 43741464146 with an independently bounded 357 ms hold: the own-window stream has a 3.123 s publication gap and then shows the fox at the left boundary. Scheduled repaint, disabled buffering and OpenGL did not correct the failure. A stream-only live native sample now places all 568 AppKit main-thread samples in Services-menu population, including 560 waiting for a synchronous VoiceShortcutClient XPC reply. The Mac-only unused-Services removal candidate still needs native validation; complete Intel rendered controls remain open. Its independent fourteen-case audio repeat passes. Source offline cache, install/upgrade/remove and actual Zed task loading have evidence; fresh Ubuntu dependency recovery is separately recorded. |
 | Scope exclusions | Controller/touch, networking, accounts, camera switches and new easter eggs are not implemented in this parity port. The original hidden fireflies remain. |
 
 - Rules: preserve goals, camp progression, boss gates, win/replay; verify full route.

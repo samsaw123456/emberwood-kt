@@ -2,14 +2,30 @@
 
 ## Current validation status
 
-The current JAR is
+The current candidate JAR is
+`375ae22702bfc62711180138abc3b01ef309339cd636cdfa0d170b8b04e0c0fd`.
+It removes the unused macOS Services menu after AWT initialization to address
+the observed AppKit Services/Shortcuts wait. All 67 unit tests pass, but native
+first-arrow movement, physical menu inspection, full control coverage and new
+performance/audio measurements remain pending. The first candidate CI attempt
+stopped in a test-fixture scheduling assertion before building or launching the
+game; it supplies no native result.
+The subsequent Intel Main retry reaches the expected startup-error dialog before
+any input; both actual desktop images were inspected, and owned SIGTERM cleanup
+clears the dialog. That run proves neither movement nor physical acknowledgement.
+Its Java stderr was not redirected, so its originating exception is not independently
+retained. The companion ARM audit separately records that the native registration
+getter remains non-null after submenu removal and the attempted nil assignment.
+The candidate therefore remains failed at native startup while that API behavior
+is investigated; no relaxation of the observed movement/release checks follows.
+
+The following measurements and investigation belong to the retained baseline JAR
 `7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
-It fixes release-then-press ordering for a new jump within one simulation tick.
-All 60 unit tests and a focused nine-case physical-input audit pass. Fresh
-Linux and both native Mac launch routes have completed their current performance
-review. The first Intel failure and transient slow intervals remain recorded
-below. Current audio verification is complete; the final Intel control review
-is still unfinished.
+That build fixed release-then-press ordering for a new jump within one simulation
+tick. Its Linux and both native Mac launch routes completed performance and
+audio review. Its Intel control review remained unfinished. These results do
+not establish that the new candidate passes; the first Intel failure and
+transient slow intervals remain recorded below.
 
 These rates count **completed Java paint calls per second**, not continuously
 measured native presentation FPS. The retained captures prove those individual
@@ -19,8 +35,10 @@ while Java paint calls continued. Passing paint-throughput averages therefore
 do not establish smooth on-screen pacing. A subsequent unchanged-Main probe
 also reached the left boundary after a promptly released Left command, with a
 3.123-second stream gap. Intel movement/presentation remains unresolved.
+The next live native sample identifies an AppKit Services/Shortcuts synchronous
+wait during the continuing stall; a remedy has not yet been verified.
 
-| Current build and launch route | Completed Java paints/s during soak | Mean Java paint | CPU, one core | Retained heap before → after |
+| Retained 7d9668ed build and launch route | Completed Java paints/s during soak | Mean Java paint | CPU, one core | Retained heap before → after |
 | --- | --- | --- | --- | --- |
 | Linux x86-64 | 62.179 | 1.189 ms | 7.872% | 20,540,584 → 20,481,336 bytes |
 | Linux ARM64 | 62.177 | 1.691 ms | 10.650% | 20,129,824 → 20,011,392 bytes |
@@ -138,8 +156,24 @@ had already released the key. NativeAudit's snapshot controller does not make
 that same AX query, so this does not establish a common cause for both probes.
 The post-error stacks were collected near recovery and do not locate the earlier
 delay. Owned SIGTERM cleanup succeeded; physical Quit remains unverified in this
-attempt. A bounded stream-only observation and concurrent native stack sample
-are prepared to isolate the Main probe's extra query; production is unchanged.
+attempt.
+
+The [stream-only Main run 43743043450](https://github.com/samsaw123456/emberwood-kt/actions/runs/43743043450)
+removes synchronous AX/snapshot queries during the hold and early recovery, but
+still fails Left. The physical hold lasts 357.015 ms; native key-up is promptly
+acknowledged. Complete stream samples are then 4.330 seconds apart, and the next
+image places the fox at the wall. All 34 original images were inspected. The
+concurrent native sample identifies the blocking path: all 568 Main Thread
+samples are in AppKit's Services-menu population, including 560 in a synchronous
+VoiceShortcutClient XPC reply wait. Its header is 505 ms after Left-down posting
+and 127 ms after native key-up acknowledgment, so it observes the continuing
+post-release stall, not the physical-held interval. Sample counts are not elapsed
+milliseconds, and tracing adds overhead. This is a concrete native blocking path,
+not a verified fix or proof that all earlier failures have the same cause.
+The separate snapshot-plus-sample run stopped before Left because D release
+missed the unchanged timing limit, so it cannot complete a paired comparison.
+Production remains unchanged. Exact stream, sample and image hashes are retained
+in `build/ci-main-stream-sampled-7d9668ed-macos-intel/build/main-movement-native-app/independent-review/`.
 
 The [OpenGL diagnostic 43741471213](https://github.com/samsaw123456/emberwood-kt/actions/runs/43741471213)
 also fails Left. Actual CGLGraphicsConfig reports **software OpenGL**. Native

@@ -5,7 +5,12 @@ in [controls-audit.tsv](controls-audit.tsv). Every row has an explicit result;
 unverified platforms and missing audio evidence remain unverified. A simulation
 campaign does not mark physical controls passed.
 
-The corrected runnable build is `7d9668ed`. Both Linux x64 source and bundled
+The table retains the audited `7d9668ed` baseline. The `375ae227` macOS Services
+menu candidate passes compilation and 67 automated tests, but startup fails on
+both Macs before any control input because its post-clear registration check
+still sees a menu object. Its native attachment semantics and final-build
+inventory remain unverified; no baseline pass transfers to it.
+For `7d9668ed`, both Linux x64 source and bundled
 runtimes pass all **280 cases**, with clean exit and all **1,214 referenced frames**
 per run inspected. Exact disjoint reviewer journals are validated by
 `build/audit-{source,packaged}-7d9668ed-final/review/all-frames-reviewed.json`;
@@ -116,11 +121,25 @@ Exact scope and hashes:
 The alternate backend has not resolved this failure. Production rendering flags
 are unchanged, and no full Intel pass is credited.
 
-The next ordinary-Main comparison is pending at `f095925`: snapshot run
-43743028454 and stream-only run 43743043450 both capture native stacks across the
-first Left input. The stream-only route omits synchronous window queries through
-the hold and early recovery, then requires held/released pixels at their actual
-presentation times. Missing or late frames remain failures.
+The stream-only ordinary-Main run 43743043450 reproduced the first-Left delay
+without synchronous window queries during the hold or early recovery. Its live
+native sample records all 568 AppKit main-thread samples in Services-menu
+population, including 560 waiting synchronously for a VoiceShortcutClient XPC
+reply. Left was physically released and acknowledged after 357.015 ms. The
+native surface still froze and then showed the fox at the boundary, so recovery
+remains failed. Evidence is under
+`build/ci-main-stream-sampled-7d9668ed-macos-intel/build/main-movement-native-app/`.
+A Mac-only candidate removes that unused native Services submenu through public
+AppKit APIs while preserving the other application-menu items. It is not yet
+accepted as a fix or credited as control coverage.
+
+The paired snapshot attempt 43743028454 and retry 43743527267 stopped before
+Left or live sampling: their independent release timing limits failed during
+D preparation and Return respectively. All four and three original frames were
+inspected. These invalid trials remain at
+`build/ci-main-snapshot-sampled-7d9668ed-macos-intel/` and
+`build/ci-main-snapshot-sampled-repeat-7d9668ed-macos-intel/`; neither supplies a
+snapshot-versus-stream treatment comparison or physical Quit proof.
 
 Current Intel audio separately passes all fourteen physical M/Sound cases and
 84 game-only recordings in run 43732427910. Both waveform sheets and both cleanup
