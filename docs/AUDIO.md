@@ -97,6 +97,12 @@ fixtures launch Java directly; they do not establish native app scheduling.
 On Intel, the standalone queue probes pass, but the actual game window still
 produces a microphone permission dialog and audio initialization remains pending.
 No permission was granted and the input guard sends no keys in this state.
-The next no-input diagnostic separates an empty window, the audio worker, ordered
-window/audio startup, and the concurrent production window; own-process Java and
-native stacks are captured before cleanup. The Intel game is not verified.
+Run `43707637231` then isolated an empty window, the audio worker, ordered
+window/audio startup, and the concurrent production window. All four raw-JVM
+contexts start without a dialog and clean up fully. The later native app still
+prompts; following fixtures wait inside `AudioQueueStart`, ultimately in Core
+Audio's device stream-usage registration. Those later fixtures may be affected
+by incomplete cleanup of the native app's pending request. Own-app stacks,
+strict cleanup, and launcher/signing comparisons are the next checks; AWT ordering
+is not established as the cause. Evidence is retained under
+`build/ci-contexts-macos-intel/mac-output-diagnostic/`. The Intel game is not verified.

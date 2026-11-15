@@ -3,15 +3,69 @@
 import argparse
 import ctypes
 import json
+import os
 import platform
 import plistlib
+import signal
 import subprocess
 import tempfile
 import time
 from pathlib import Path
 
+from mac_app_profile import app_pid
+from mac_audio_audit import capture_initialization_stacks
 from mac_game_focus import NativeFocusUnavailable, require_game_window
+from mac_game_window import GameWindow
 from mac_profile_observer import NativeStatus
+
+
+def cleanup_app(pid, executable, windows, baseline, output):
+    """Wait for this app and new ordinary windows to leave before another probe."""
+    record = {"pid": pid, "signals": [], "result": "UNVERIFIED"}
+
+    def alive():
+        if pid is None:
+            return False
+        try:
+            return windows.executable(pid) == executable
+        except RuntimeError:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            raise  # Never signal a live process whose identity is unavailable.
+
+    try:
+        for kind in (signal.SIGTERM, signal.SIGKILL):
+            if not alive():
+                break
+            os.kill(pid, kind)
+            record["signals"].append(kind.name)
+            deadline = time.monotonic() + 5
+            while alive() and time.monotonic() < deadline:
+                time.sleep(0.1)
+        if alive():
+            raise RuntimeError("The exact native app survived bounded cleanup")
+        deadline = time.monotonic() + 5
+        while True:
+            remaining = windows.visible_registry() - baseline
+            if not remaining or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        record["new_windows_remaining"] = sorted(remaining)
+        subprocess.run(
+            ["screencapture", "-x", output / "after-cleanup-desktop.png"],
+            check=True,
+            timeout=5,
+        )
+        if remaining:
+            raise RuntimeError("New native windows remain; later probes must not run")
+        record["result"] = "PASS"
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        record["error"] = str(error)
+        raise
+    finally:
+        (output / "cleanup.json").write_text(json.dumps(record, indent=2) + "\n")
 
 
 def main():
@@ -73,6 +127,8 @@ def main():
     core.CGEventSourceFlagsState.argtypes = [ctypes.c_int]
     core.CGEventSourceFlagsState.restype = ctypes.c_uint64
     native = NativeStatus()
+    windows = GameWindow()
+    baseline = windows.visible_registry()
     receipts = []
     held = set()
     keys = {
@@ -137,19 +193,19 @@ def main():
             raise RuntimeError(
                 f"Installed game is not the receiving foreground app at {phase}; inspect desktop and native-state evidence"
             )
-        if not args.startup_only:
-            try:
-                state["accessibility_window"] = require_game_window(pid)
-            except NativeFocusUnavailable as error:
-                state["input_guard_error"] = str(error)
-                raise
-            finally:
-                (args.output / "native-state.json").write_text(
-                    json.dumps(receipts, indent=2) + "\n"
-                )
+        try:
+            state["accessibility_window"] = require_game_window(pid)
+        except NativeFocusUnavailable as error:
+            state["input_guard_error"] = str(error)
+            raise
+        finally:
+            (args.output / "native-state.json").write_text(
+                json.dumps(receipts, indent=2) + "\n"
+            )
 
     process = None
     pid = None
+    stacks_captured = False
     try:
         with tempfile.TemporaryDirectory(prefix="emberwood-bundle-save-") as data:
             process = subprocess.Popen(
@@ -158,18 +214,12 @@ def main():
             window = None
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
-                listing = subprocess.check_output(
-                    ["ps", "-axo", "pid=,command="], text=True
-                )
-                for line in listing.splitlines():
-                    fields = line.strip().split(None, 1)
-                    if (
-                        len(fields) == 2
-                        and fields[1].startswith(str(executable))
-                        and data in fields[1]
-                    ):
-                        pid = int(fields[0])
+                pid = pid or app_pid(native, app)
                 if pid:
+                    if windows.executable(pid) != executable:
+                        raise RuntimeError(
+                            "LaunchServices PID has a different executable"
+                        )
                     window = window_for(pid)
                     if window:
                         break
@@ -196,6 +246,9 @@ def main():
                 ["screencapture", "-x", args.output / "desktop-with-dock.png"],
                 check=True,
             )
+            if args.startup_only:
+                capture_initialization_stacks(pid, args.output)
+                stacks_captured = True
             require_foreground(pid, "before-game-input")
             if args.startup_only:
                 (args.output / "result.json").write_text(
@@ -270,16 +323,29 @@ def main():
                 + "\n"
             )
             print("PASS: installed .app window launched; native Command+Q closed it.")
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        if pid and not stacks_captured:
+            try:
+                identified = windows.executable(pid) == executable
+            except RuntimeError as error:
+                (args.output / "initialization-stack-results.json").write_text(
+                    json.dumps({"result": "UNVERIFIED", "reason": str(error)}) + "\n"
+                )
+            else:
+                if identified:
+                    capture_initialization_stacks(pid, args.output)
+        raise
     finally:
         for code in list(held):
             key(code, False)
-        if pid and window_for(pid) is not None:
-            subprocess.run(["kill", "-TERM", str(pid)], check=False)
-        if process and process.poll() is None:
-            process.terminate()
-            process.wait(timeout=5)
-        for value in keys.values():
-            foundation.CFRelease(value)
+        try:
+            cleanup_app(pid, executable, windows, baseline, args.output)
+        finally:
+            if process and process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+            for value in keys.values():
+                foundation.CFRelease(value)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -149,6 +150,37 @@ def verify_output_backend(java, jar, tests, output, label, sdk_layout):
         )
 
 
+def record_signing(app, source_java, output):
+    """Retain read-only package identity; never change signing or privacy access."""
+    metadata = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    (output / "app-Info.plist").write_bytes(plistlib.dumps(metadata))
+    targets = {
+        "source-java": source_java,
+        "packaged-java": app / "Contents/runtime/Contents/Home/bin/java",
+        "app-launcher": app / "Contents/MacOS" / metadata["CFBundleExecutable"],
+        "app-bundle": app,
+    }
+    receipts = {}
+    for label, target in targets.items():
+        with (output / f"signing-{label}.log").open("w") as log:
+            result = subprocess.run(
+                [
+                    "codesign",
+                    "--display",
+                    "--verbose=4",
+                    "--entitlements",
+                    ":-",
+                    target,
+                ],
+                check=False,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=15,
+            )
+        receipts[label] = {"path": str(target), "exit_code": result.returncode}
+    (output / "signing-results.json").write_text(json.dumps(receipts, indent=2) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -219,6 +251,7 @@ def main():
         app = Path(temporary) / "Emberwood Kotlin.app"
         subprocess.run(["ditto", original, app], check=True)
         subprocess.run(["codesign", "--verify", "--deep", "--strict", app], check=True)
+        record_signing(app, Path(os.environ["JAVA_HOME"]) / "bin/java", output)
         jar = app / "Contents/app/emberwood-kotlin.jar"
         runtime = app / "Contents/runtime/Contents/Home/bin/java"
         selected["game_jar_sha256"] = hashlib.sha256(jar.read_bytes()).hexdigest()
@@ -288,6 +321,15 @@ def main():
             results[label] = "PASS" if result.returncode == 0 else "FAIL"
             print(label, results[label], flush=True)
             (output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+            if label == "bundle-foreground":
+                cleanup = output / "bundle-launch/cleanup.json"
+                if (
+                    not cleanup.is_file()
+                    or json.loads(cleanup.read_text()).get("result") != "PASS"
+                ):
+                    raise RuntimeError(
+                        "Native-app cleanup is unverified; no later PCM fixture was launched"
+                    )
     if any(value != "PASS" for value in results.values()):
         raise SystemExit(
             "Output-only diagnostic failed; inspect retained logs and screenshots. No microphone permission was granted."
