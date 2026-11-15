@@ -45,10 +45,12 @@ private class NativeAudit(
     )
 
     private val deliveries = ConcurrentHashMap<Triple<Int, Int, Boolean>, Delivery>()
+    private val keyReceipts = mutableListOf<String>()
     private var wheelEvents = 0
     private var lastWheelRotation = 0
     private val inputTimings = mutableListOf<String>()
-    private var currentCase = "startup"
+
+    @Volatile private var currentCase = "startup"
     private val selectedCases = System.getProperty("audit.filter")?.let(::Regex)
     private val macOS = System.getProperty("os.name").startsWith("Mac")
     private val observedDesktopState = GamePanel::class.java.getDeclaredField("previousState").apply { isAccessible = true }
@@ -198,6 +200,10 @@ private class NativeAudit(
             Files.writeString(
                 output.resolve("input-latency.tsv"),
                 "Case\tKey code\tLocation\tAction\tDelivery milliseconds\n" + inputTimings.joinToString("\n") + "\n",
+            )
+            Files.writeString(
+                output.resolve("awt-key-receipts.jsonl"),
+                edt { keyReceipts.joinToString("\n", postfix = "\n") },
             )
             Files.writeString(
                 output.resolve("presentation-latency.tsv"),
@@ -371,7 +377,14 @@ private class NativeAudit(
         down: Boolean,
     ) {
         val binding = Triple(event.keyCode, event.keyLocation, down)
-        deliveries[binding] = Delivery((deliveries[binding]?.count ?: 0) + 1, System.nanoTime())
+        val received = System.nanoTime()
+        keyReceipts.add(
+            "{\"case\":${NativeAuditTools.quote(currentCase)},\"down\":$down," +
+                "\"keyCode\":${event.keyCode},\"keyLocation\":${event.keyLocation}," +
+                "\"modifiersEx\":${event.modifiersEx},\"eventMillis\":${event.`when`}," +
+                "\"receivedNanos\":$received}",
+        )
+        deliveries[binding] = Delivery((deliveries[binding]?.count ?: 0) + 1, received)
     }
 
     private fun await(
@@ -849,7 +862,9 @@ private class NativeAudit(
                     GameState.PLAYING,
                     "Dash in visible facing direction once per held press; release permits another dash",
                 ) {
-                    edt { panel.game.player.reset(Vec(if (direction > 0) 140.0 else 430.0, 536.0)) }
+                    // Stay left of the camera-follow anchor so screen displacement measures
+                    // this dash directly, without a returning camera cancelling part of it.
+                    edt { panel.game.player.reset(Vec(if (direction > 0) 140.0 else 350.0, 536.0)) }
                     if (direction < 0) {
                         tap(KeyEvent.VK_A)
                         delay(160)

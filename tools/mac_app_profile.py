@@ -22,6 +22,10 @@ from mac_test_bridge import Controller
 from package_integrity import tree_digest
 
 ROOT = Path(__file__).resolve().parents[1]
+TARGETED_CONTROLS_FILTER = r"^PLAYING/(A|D|Left|Right|←|→)$|/M$|/left-shift facing |/right-shift facing |/Release .* while unfocused$"
+TARGETED_CONTROLS_CASES = (
+    26  # 4 direction + 6 mute + 4 dash + 11 focus/release + lifecycle.
+)
 
 
 def configure_app(app, tests, output, seconds, input_socket, audit="performance"):
@@ -45,9 +49,11 @@ def configure_app(app, tests, output, seconds, input_socket, audit="performance"
                 f"-Dperformance.soakSeconds={seconds}",
             ]
         )
-    elif audit == "controls":
+    elif audit in {"controls", "controls-targeted"}:
         main_class = "emberwood.NativeAuditKt"
         options.append(f"-Daudit.output={output}")
+        if audit == "controls-targeted":
+            options.append(f"-Daudit.filter={TARGETED_CONTROLS_FILTER}")
     elif audit == "audio":
         main_class = "emberwood.AudioStateFixture"
     else:
@@ -126,7 +132,7 @@ def validate_completion(result, audit, seconds):
     if not isinstance(result, dict) or result.get("result") != "PASS":
         raise RuntimeError("Native audit failed; inspect completion.json")
     required = {"result", "exception"}
-    if audit == "controls":
+    if audit in {"controls", "controls-targeted"}:
         required.update(
             {"cases", "expected_cases", "failed_cases", "failure_count", "filtered"}
         )
@@ -138,17 +144,18 @@ def validate_completion(result, audit, seconds):
         raise RuntimeError("Unknown native audit completion mode")
     if not required.issubset(result):
         raise RuntimeError("Native audit completion is missing required evidence")
-    if audit == "controls":
+    if audit in {"controls", "controls-targeted"}:
+        targeted = audit == "controls-targeted"
         if (
-            result.get("cases") != 280
+            result.get("cases") != (TARGETED_CONTROLS_CASES if targeted else 280)
             or result.get("expected_cases") != 280
             or result.get("failed_cases") != []
             or result.get("failure_count") != 0
             or result.get("exception") is not None
-            or result.get("filtered") is not False
+            or result.get("filtered") is not targeted
         ):
             raise RuntimeError(
-                "Native controls completion does not prove the full 280-case inventory"
+                "Native controls completion does not match the requested coverage"
             )
     elif (
         result.get("measured_windows") != 22
@@ -256,7 +263,9 @@ def launch_profile(app, output, timeout, controller, audit="performance", second
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--audit", choices=("performance", "controls"), default="performance"
+        "--audit",
+        choices=("performance", "controls", "controls-targeted"),
+        default="performance",
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--soak-seconds", type=int, default=30)
@@ -302,6 +311,12 @@ def main():
         "jfr": "Not enabled: the unchanged shipped runtime has no jdk.jfr module",
         "result": "INCOMPLETE",
     }
+    if args.audit == "controls-targeted":
+        evidence.update(
+            controls_filter=TARGETED_CONTROLS_FILTER,
+            expected_filtered_cases=TARGETED_CONTROLS_CASES,
+            full_inventory_verified=False,
+        )
     with (
         tempfile.TemporaryDirectory(prefix="emberwood native profile ") as temporary,
         ExitStack() as controllers,
@@ -334,21 +349,32 @@ def main():
             evidence["audit_completion"] = launch_profile(
                 app,
                 output,
-                args.soak_seconds + 360 if args.audit == "performance" else 2700,
+                args.soak_seconds + 360
+                if args.audit == "performance"
+                else 600
+                if args.audit == "controls-targeted"
+                else 2700,
                 controller,
                 args.audit,
                 args.soak_seconds,
             )
             controller.close()
             evidence["external_controller_cleanup"] = "PASS"
-            evidence["result"] = "PASS"
+            evidence["result"] = (
+                "PARTIAL_PASS" if args.audit == "controls-targeted" else "PASS"
+            )
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             evidence["result"] = "FAIL"
             evidence["error"] = str(error)
             raise
         finally:
             record.write_text(json.dumps(evidence, indent=2) + "\n")
-    print(f"PASS: copied native app completed the {args.audit} audit")
+    if args.audit == "controls-targeted":
+        print(
+            f"PARTIAL PASS: {TARGETED_CONTROLS_CASES} filtered rows; full inventory remains unverified"
+        )
+    else:
+        print(f"PASS: copied native app completed the {args.audit} audit")
 
 
 if __name__ == "__main__":

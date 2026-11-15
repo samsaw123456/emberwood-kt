@@ -32,6 +32,7 @@ class Controller:
         keys_factory=NativeKeys,
         pointer_factory=NativePointer,
         auxiliary_guard=None,
+        auxiliary_timeout=2.0,
     ):
         self.output, self.executable = output.resolve(), executable.resolve()
         self.guard, self.windows, self.keys_factory = (
@@ -42,6 +43,7 @@ class Controller:
         self.pid = None
         self.pointer_factory = pointer_factory
         self.auxiliary_guard = auxiliary_guard or require_game_window
+        self.auxiliary_timeout = auxiliary_timeout
         self.auxiliary_windows = {}
         self.guarded = False
         self.lock = threading.Lock()
@@ -339,9 +341,7 @@ class Controller:
                     raise RuntimeError("Auxiliary audit window was not registered")
                 del self.auxiliary_windows[title]
             else:
-                self.auxiliary_guard(pid, title)
-                window = self.windows.find(pid, title=title)
-                self.auxiliary_windows[title] = window["id"]
+                self.register_auxiliary(pid, title)
             return
         if (
             command == "move"
@@ -378,6 +378,38 @@ class Controller:
             pointer.wheel(request[1])
         else:
             raise ValueError("Invalid native pointer operation")
+
+    def register_auxiliary(self, pid, title):
+        # AX focus can become visible before CGWindowList publishes a new AWT
+        # window. Observe both independently; this wait never emits input.
+        started = time.monotonic()
+        record = {"pid": pid, "title": title, "result": "UNVERIFIED", "attempts": []}
+        try:
+            while True:
+                attempt = {"milliseconds": (time.monotonic() - started) * 1000}
+                record["attempts"].append(attempt)
+                try:
+                    self.identify(pid)
+                    attempt["focus"] = self.auxiliary_guard(pid, title)
+                    window = self.windows.find(pid, title=title)
+                    self.auxiliary_windows[title] = window["id"]
+                    record.update(result="PASS", window=window)
+                    return
+                except RuntimeError as error:
+                    attempt["reason"] = str(error)
+                    remaining = self.auxiliary_timeout - (time.monotonic() - started)
+                    if remaining <= 0:
+                        raise RuntimeError(
+                            f"Auxiliary window {title!r} did not become focused and "
+                            f"visible within {self.auxiliary_timeout:g} seconds: {error}"
+                        ) from error
+                    time.sleep(min(0.025, remaining))
+        finally:
+            record["milliseconds"] = (time.monotonic() - started) * 1000
+            with (self.output / "external-auxiliary-registration.jsonl").open(
+                "a"
+            ) as log:
+                log.write(json.dumps(record) + "\n")
 
     def require_point_in_game(self, pid, position):
         x, y = position

@@ -14,6 +14,7 @@ class NativeAppConfigTests(unittest.TestCase):
         for mode, main in [
             ("performance", "emberwood.PerformanceAudit"),
             ("controls", "emberwood.NativeAuditKt"),
+            ("controls-targeted", "emberwood.NativeAuditKt"),
             ("audio", "emberwood.AudioStateFixture"),
         ]:
             with (
@@ -52,8 +53,11 @@ class NativeAppConfigTests(unittest.TestCase):
                     self.assertIn("-XX:ActiveProcessorCount=2\n", configured)
                 else:
                     self.assertIn("java-options=-Xmx256m\n", configured)
-                    if mode == "controls":
+                    if mode in {"controls", "controls-targeted"}:
                         self.assertIn("-Daudit.output=", configured)
+                    self.assertEqual(
+                        "-Daudit.filter=" in configured, mode == "controls-targeted"
+                    )
                     self.assertNotIn("performance.", configured)
                 self.assertEqual(tree_digest(app / "Contents/runtime"), before)
                 self.assertEqual(game.read_bytes(), b"unchanged game fixture")
@@ -114,6 +118,29 @@ class NativeAppConfigTests(unittest.TestCase):
         for malformed in [None, [], "PASS", {}]:
             with self.assertRaises(RuntimeError):
                 validate_completion(malformed, "controls", 180)
+
+    def test_targeted_control_result_can_never_validate_as_full_inventory(self):
+        partial = {
+            "result": "PASS",
+            "cases": 26,
+            "expected_cases": 280,
+            "failed_cases": [],
+            "failure_count": 0,
+            "filtered": True,
+            "exception": None,
+        }
+        validate_completion(partial, "controls-targeted", 30)
+        with self.assertRaises(RuntimeError):
+            validate_completion(partial, "controls", 30)
+        for changes in [
+            {"cases": 25},
+            {"cases": 280},
+            {"filtered": False},
+            {"failure_count": 1},
+            {"exception": "missing input"},
+        ]:
+            with self.subTest(changes=changes), self.assertRaises(RuntimeError):
+                validate_completion({**partial, **changes}, "controls-targeted", 30)
 
 
 if __name__ == "__main__":

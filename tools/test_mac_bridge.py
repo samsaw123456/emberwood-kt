@@ -395,6 +395,74 @@ class BridgeTests(unittest.TestCase):
         self.wait_closed(self.pointers[0])
         self.assertEqual(self.pointers[0].events, [])
 
+    def test_auxiliary_registration_waits_for_native_window_publication(self):
+        self.guard()
+        title = "Emberwood audit focus"
+        original_find = self.windows.find
+        attempts = []
+
+        def delayed_find(pid, title=None):
+            if title == "Emberwood audit focus":
+                attempts.append(title)
+                if len(attempts) < 3:
+                    raise RuntimeError("Fixture native window not published yet")
+            return original_find(pid, title)
+
+        self.windows.find = delayed_find
+        with self.client("pointer-serve") as stream:
+            self.assertEqual(stream.readline(), b"READY\n")
+            self.focused, self.focused_auxiliary = False, title
+            self.assertEqual(
+                self.pointer_command(stream, "register-aux", title), b"OK\n"
+            )
+            self.assertEqual(self.pointers[0].events, [])
+            self.assertEqual(self.controller.auxiliary_windows, {title: 8})
+            self.assertEqual(self.pointer_command(stream, "move", 50, 60), b"OK\n")
+        self.wait_closed(self.pointers[0])
+        record = json.loads(
+            (self.output / "external-auxiliary-registration.jsonl").read_text()
+        )
+        self.assertEqual(record["result"], "PASS")
+        self.assertEqual(len(record["attempts"]), 3)
+        self.assertEqual(record["window"]["id"], 8)
+        self.assertTrue(all("reason" in row for row in record["attempts"][:2]))
+
+    def test_unpublished_auxiliary_times_out_without_input_and_releases_owned_button(
+        self,
+    ):
+        self.guard()
+        title = "Emberwood mouse focus audit"
+        original_find = self.windows.find
+
+        def unpublished_find(pid, title=None):
+            if title == "Emberwood mouse focus audit":
+                raise RuntimeError("Fixture native window never published")
+            return original_find(pid, title)
+
+        self.windows.find = unpublished_find
+        self.controller.auxiliary_timeout = 0.06
+        with self.client("pointer-serve") as stream:
+            self.assertEqual(stream.readline(), b"READY\n")
+            self.assertEqual(
+                self.pointer_command(stream, "button", "left", True), b"OK\n"
+            )
+            self.focused, self.focused_auxiliary = False, title
+            reply = self.pointer_command(stream, "register-aux", title)
+            self.assertTrue(reply.startswith(b"ERROR "))
+            self.assertIn(b"within 0.06 seconds", reply)
+        self.wait_closed(self.pointers[0])
+        self.assertEqual(self.controller.auxiliary_windows, {})
+        self.assertEqual(
+            self.pointers[0].events,
+            [("button", "left", True), ("button", "left", False)],
+        )
+        record = json.loads(
+            (self.output / "external-auxiliary-registration.jsonl").read_text()
+        )
+        self.assertEqual(record["result"], "UNVERIFIED")
+        self.assertGreaterEqual(len(record["attempts"]), 2)
+        self.assertTrue(all("reason" in row for row in record["attempts"]))
+
     def test_controller_close_releases_pointer_with_open_client(self):
         self.guard()
         with self.client("pointer-serve") as stream:

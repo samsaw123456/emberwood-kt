@@ -24,7 +24,7 @@ on:
         type: choice
         required: true
         default: performance
-        options: [performance, controls, compare-launchers]
+        options: [performance, controls, controls-targeted, compare-launchers]
 permissions:
   contents: read
 jobs:
@@ -57,7 +57,7 @@ jobs:
         run: |
           case "$SOAK_SECONDS" in 30|180) ;; *) exit 2 ;; esac
           case "$AUDIT_KIND" in
-            performance|controls)
+            performance|controls|controls-targeted)
               python3 tools/mac_app_profile.py --audit "$AUDIT_KIND" --soak-seconds "$SOAK_SECONDS" ;;
             compare-launchers)
               python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds "$SOAK_SECONDS" ;;
@@ -71,6 +71,7 @@ jobs:
           path: |
             build/performance-native-app/
             build/controls-native-app/
+            build/controls-targeted-native-app/
             build/performance-launcher-comparison/
             build/reports/tests/
           if-no-files-found: warn

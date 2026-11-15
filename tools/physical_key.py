@@ -55,6 +55,8 @@ class NativeKeys:
             ]
             self.core.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
             self.core.CGEventPost.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+            self.core.CGEventGetFlags.argtypes = [ctypes.c_void_p]
+            self.core.CGEventGetFlags.restype = ctypes.c_uint64
             self.core.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
             self.core.CGEventSourceFlagsState.argtypes = [ctypes.c_int]
             self.core.CGEventSourceFlagsState.restype = ctypes.c_uint64
@@ -113,6 +115,7 @@ class NativeKeys:
         shift_masks = {"left-shift": 0x2, "right-shift": 0x4}
         initial_flags = core.CGEventSourceFlagsState(0)
         shifts = {key: bool(initial_flags & mask) for key, mask in shift_masks.items()}
+        posted_flags = []
         for key, action in events:
             event = core.CGEventCreateKeyboardEvent(
                 None, CODES[key][1], action == "down"
@@ -120,6 +123,7 @@ class NativeKeys:
             if not event:
                 raise RuntimeError("Cannot create physical keyboard event")
             try:
+                flags = core.CGEventGetFlags(event)
                 if key in shifts:
                     shifts[key] = action == "down"
                     # Apple IOLLEvent.h: preserve both device-side and aggregate Shift.
@@ -127,7 +131,23 @@ class NativeKeys:
                     for shift, held in shifts.items():
                         if held:
                             flags |= 0x20000 | shift_masks[shift]
-                    core.CGEventSetFlags(event, flags)
+                # A nil-source Quartz event can inherit an earlier arrow's keypad/Fn
+                # metadata. Those are not modifiers held for a subsequent letter.
+                # Preserve real Fn state, and retain the current arrow/keypad identity.
+                fn_down = bool(core.CGEventSourceKeyState(0, 63))
+                if key not in {"left", "right", "up", "down", "keypad-enter"}:
+                    flags &= ~0x200000
+                if key not in {"left", "right", "up", "down"} and not fn_down:
+                    flags &= ~0x800000
+                core.CGEventSetFlags(event, flags)
+                posted_flags.append(
+                    {
+                        "key": key,
+                        "action": action,
+                        "flags": flags,
+                        "fn_key_down": fn_down,
+                    }
+                )
                 core.CGEventPost(0, event)
             finally:
                 core.CFRelease(event)
@@ -154,6 +174,7 @@ class NativeKeys:
                     "flags": flags,
                     "key_table": keys,
                     "acknowledged": acknowledged,
+                    "posted_flags": posted_flags,
                 }
             if time.monotonic() >= deadline:
                 raise RuntimeError(
