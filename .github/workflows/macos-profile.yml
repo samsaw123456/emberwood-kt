@@ -24,7 +24,7 @@ on:
         type: choice
         required: true
         default: performance
-        options: [performance, controls, controls-targeted, controls-capture, controls-buffering-compare, controls-scheduled, controls-opengl, main-movement, services-registration, compare-launchers, audio, audio-trace]
+        options: [performance, controls, controls-targeted, controls-capture, controls-buffering-compare, controls-scheduled, controls-opengl, main-movement, services-registration, startup-failure, compare-launchers, audio, audio-trace]
       held_capture:
         description: Main movement only — snapshot or independent stream during the fixed hold
         type: choice
@@ -70,6 +70,7 @@ jobs:
           python3 -m unittest discover -s tools -p 'test_mac_app*.py' -v
           python3 -m unittest discover -s tools -p 'test_mac_bundle*.py' -v
           python3 -m unittest discover -s tools -p 'test_physical_key.py' -v
+          python3 -m unittest discover -s tools -p 'test_mac_startup_failure.py' -v
           python3 -m unittest tools.test_mac_stream_diagnostic -v
           ./gradlew --no-daemon check fatJar
           python3 tools/package_app.py --skip-build
@@ -111,12 +112,14 @@ jobs:
               python3 tools/mac_main_movement.py --output build/main-movement-native-app "${main_args[@]}" ;;
             services-registration)
               "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.MacApplicationMenuProbe --observe-registration build/mac-services-registration ;;
+            startup-failure)
+              python3 tools/mac_startup_failure.py ;;
             compare-launchers)
               python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds "$SOAK_SECONDS" ;;
             *) exit 2 ;;
           esac
       - name: Verify native menu identity and lifecycle
-        if: inputs.audit != 'services-registration'
+        if: inputs.audit != 'services-registration' && inputs.audit != 'startup-failure'
         timeout-minutes: 2
         run: >-
           "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED
@@ -136,6 +139,7 @@ jobs:
             build/main-movement-native-app/
             build/mac-menu-probe/
             build/mac-services-registration/
+            build/startup-failure-native-app/
             build/performance-launcher-comparison/
             build/audio-native-app/
             build/reports/tests/
