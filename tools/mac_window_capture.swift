@@ -1,4 +1,5 @@
 // Test-only persistent capture of the explicitly identified game's window.
+import AppKit
 import CoreGraphics
 import Darwin
 import Foundation
@@ -62,7 +63,11 @@ struct WindowCapture {
         guard CGImageDestinationFinalize(destination) else { throw CaptureError.unavailable("Could not write the requested PNG") }
     }
 
+    @MainActor
     static func main() async {
+        // NSApplication establishes the WindowServer connection required by CG/SCK.
+        // This external test helper never activates or creates a window of its own.
+        _ = NSApplication.shared.setActivationPolicy(.prohibited)
         guard CommandLine.arguments.count == 2, let pid = Int32(CommandLine.arguments[1]), pid > 1,
               CGPreflightScreenCaptureAccess() else {
             fputs("Capture requires the exact game PID and pre-existing permission; no consent requested\n", stderr)
