@@ -14,9 +14,23 @@ records are `build/audit-source-88283267-final/controls-reviewed.tsv` and
 rendered/audio evidence. Linux ARM64 source and bundled runs also have all 280
 cases and all 1,208 referenced frames reviewed, at
 `build/ci-final-8828-linux-arm64/build/{audit,audit-packaged}/controls-reviewed.tsv`.
-Those ARM runs had no output device: fifteen audio-related rows retain an
-unverified output component, and the lifecycle row awaits physical window-close
-proof. The tracked table keeps these gaps and the Mac inventory separate.
+The original ARM runs had no output device. Separate exact-build checks now
+complete all fifteen audio-related rows and physical window close through
+`build/ci-audio-final-linux-arm64/build/audio-linux/`: fourteen physical audio
+cases per runtime, actual game-only virtual output, and real MainKt Alt+F4 with
+inspected frames and clean exit. This establishes software output, without a
+claim about speaker hardware.
+
+The final macOS ARM native app also passes all 280 rows, with all 1,208 frames
+reviewed, fourteen actual audio cases, and separately inspected physical
+Command+Q. Its consolidated record is
+`build/ci-native-final-macos-arm/build/controls-native-app/controls-reviewed.tsv`.
+The source column explicitly says **SHARED PROOF**: the complete cached source
+and packaged app trees match, including game, runtime, launcher configuration
+and signatures; actual source startup, physical close and performance were
+independently exercised. The full physical inventory ran on the bundle, not
+twice. Intel Mac's final control review remains open.
+
 Automatic assertions, visual inspection and audio-output verification are
 recorded separately in the coverage TSV and [verification record](VERIFICATION.md).
 A failed or unfinished final-build rerun does not inherit a previous build's pass.
@@ -85,8 +99,11 @@ restages TITLE between activations because there is no return-to-title command.
 That setup preserves the actual selected setting and is separate from the
 physical input and rendered animation being tested.
 
-The test window uses a non-interactive 6×6 color marker to confirm that the desktop
-has presented the requested frame before capture. Saved PNGs retain the actual
+The test window uses a non-interactive black/white nonce marker to confirm that
+the desktop has presented the requested frame before capture. Twenty cells encode
+fixed anchors and a fresh 16-bit nonce; stale frames and ambiguous cells are
+rejected. A startup capture checks this before any player input. This test-only
+marker tolerates capture color conversion without weakening artwork checks. Saved PNGs retain the actual
 window size and letterboxing. The marker belongs only to the audit. Input and
 presentation latency tables are retained with the frames. Keyboard input uses
 an additional `awt-key-receipts.jsonl` journal of every delivered press/release,

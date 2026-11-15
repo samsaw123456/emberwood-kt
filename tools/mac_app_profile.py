@@ -484,6 +484,7 @@ def main():
     if not original.is_dir() or not (tests / "emberwood" / entry).is_file():
         parser.error("Build the native package and requested audit test classes first")
     selected = default_output()
+    original_digest = tree_digest(original)
     runtime_digest = tree_digest(original / "Contents/runtime")
     jar_digest = hashlib.sha256(
         (original / "Contents/app/emberwood-kotlin.jar").read_bytes()
@@ -492,6 +493,7 @@ def main():
         "launch_method": "LaunchServices open -W -n",
         "audit": args.audit,
         "original_app": str(original),
+        "original_app_tree_sha256": original_digest,
         "game_jar_sha256": jar_digest,
         "original_runtime_sha256": runtime_digest,
         "selected_output": selected,
@@ -575,6 +577,9 @@ def main():
                 raise RuntimeError(
                     "Native audit changed production game or runtime bytes"
                 )
+            evidence["original_app_tree_sha256_after"] = tree_digest(original)
+            if evidence["original_app_tree_sha256_after"] != original_digest:
+                raise RuntimeError("Native audit changed original app tree")
             if args.audit == "audio":
                 if args.audio_trace:
                     evidence["audio_trace_completion"] = validate_audio_trace(output)
@@ -595,6 +600,8 @@ def main():
             evidence["error"] = str(error)
             raise
         finally:
+            if "original_app_tree_sha256_after" not in evidence:
+                evidence["original_app_tree_sha256_after"] = tree_digest(original)
             record.write_text(json.dumps(evidence, indent=2) + "\n")
     if args.audit == "controls-targeted":
         print(

@@ -27,12 +27,28 @@ internal object PresentationMarker {
         nonce: Int,
     ): Boolean {
         require(nonce in 0..65535)
-        if (image.width < ORIGIN + COLUMNS * CELL || image.height < ORIGIN + CELLS / COLUMNS * CELL) return false
-        return (0 until CELLS).all { index ->
+        return readNonce(image) == nonce
+    }
+
+    fun readNonce(image: BufferedImage): Int? {
+        if (image.width < ORIGIN + COLUMNS * CELL || image.height < ORIGIN + CELLS / COLUMNS * CELL) return null
+        var nonce = 0
+        for (index in 0 until CELLS) {
             val rgb = image.getRGB(ORIGIN + index % COLUMNS * CELL + 1, ORIGIN + index / COLUMNS * CELL + 1)
             val channels = listOf(rgb shr 16 and 255, rgb shr 8 and 255, rgb and 255)
-            if (white(index, nonce)) channels.all { it >= 224 } else channels.all { it <= 31 }
+            val isWhite =
+                when {
+                    channels.all { it >= 224 } -> true
+                    channels.all { it <= 31 } -> false
+                    else -> return null
+                }
+            if (index < 4) {
+                if (isWhite != (index % 2 == 0)) return null
+            } else if (isWhite) {
+                nonce = nonce or (1 shl (index - 4))
+            }
         }
+        return nonce
     }
 
     private fun white(

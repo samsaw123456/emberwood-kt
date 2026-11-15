@@ -78,4 +78,6 @@ jobs:
             build/performance-launcher-comparison/
             build/audio-native-app/
             build/reports/tests/
+            dist/*.zip
+            dist/*.sha256
           if-no-files-found: warn

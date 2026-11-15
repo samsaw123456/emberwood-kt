@@ -1,12 +1,59 @@
 # Performance verification
 
+## Current build
+
+Production JAR `88283267eefaf417da4965a1248c1b70b9188effd71f6ee3f69cc2c1911e5bc1`
+passes every performance threshold on Linux x86-64/ARM64 and both native Mac
+launch routes on Intel/ARM64. Each row below includes all 22 measurement windows
+and a full 180-second input soak with a 128 MiB Java heap and two visible
+processors. All 28 game frames per route were inspected; these are measured
+hardware results, not a guarantee for every low-resource machine.
+
+| Platform and launch route | Soak frames/s | Mean paint | CPU, one core | Peak sampled process RSS |
+| --- | --- | --- | --- | --- |
+| Linux x86-64 | 62.149 | 1.663 ms | 9.222% | Not recorded |
+| Linux ARM64 | 62.155 | 1.915 ms | 11.527% | Not recorded |
+| Mac ARM64, cached source app | 51.026 | 5.155 ms | 44.634% | 262,640 KiB |
+| Mac ARM64, packaged app | 50.776 | 5.284 ms | 43.108% | 266,384 KiB |
+| Mac Intel, cached source app | 57.339 | 4.002 ms | 72.845% | 209,200 KiB |
+| Mac Intel, packaged app | 57.504 | 3.937 ms | 72.940% | 216,904 KiB |
+
+The Mac runs include a ready, running audio output. The Linux performance hosts
+had no output line; separate actual PCM tests cover both Linux architectures,
+but do not add audio CPU cost to these performance numbers. RSS includes native
+allocations and is sampled once a second, rather than an operating-system peak.
+Retained Java heap stays stable in every row. ARM Mac content is 1024×648;
+Intel Mac and Linux content is 1152×648.
+
+The actual source launcher creates and reuses a native Mac app through the same
+builder as the download. The source and packaged runtime/JAR bytes match on
+each Mac architecture. Both routes use LaunchServices; the earlier raw-JVM
+pacing failures below do not describe the corrected source launcher. The Intel
+packaged startup snapshot catches an empty initial window; its subsequent title
+and all 28 measured game frames render correctly. That early snapshot is retained
+as a capture limitation, not presented as a rendered startup proof.
+
+Evidence: [Linux run 43712421975](https://github.com/samsaw123456/emberwood-kt/actions/runs/43712421975)
+and [native Mac run 43715704373](https://github.com/samsaw123456/emberwood-kt/actions/runs/43715704373).
+Independent metric checks, exact frame hashes and visual journals are retained in
+`build/ci-final-8828-linux-{x64,arm64}/build/performance/independent-review/`
+and `build/ci-native-final-macos-{arm,intel}/build/performance-{source,native}-app/independent-review/`.
+The Intel Mac run's later control audit failed before input because its test
+marker did not survive display color conversion; its audio step was skipped.
+The separate native trace repeat `43719992137` subsequently completed all fourteen
+physical audio cases on each Mac. Control coverage remains separate from these
+performance checks. Actual audio continuity findings and follow-up diagnostics
+are recorded in [AUDIO.md](AUDIO.md).
+
+## Audit method
+
 The native performance audit opens the actual Swing window, captures its rendered
 output, and uses operating-system keys for movement, jumping, retry, pause and a
 three-minute movement/projectile soak. Original level fixtures separately cover
 eight regions, four ordinary monster species and six guardians. Fixtures are
 performance scenes, not evidence of completing those levels through input.
 
-Run it after `./gradlew check fatJar`, using Java 25:
+On Linux, run it after `./gradlew check fatJar`, using Java 25:
 
 ```sh
 env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a tools/run_x11_audit.sh \
@@ -16,13 +63,27 @@ env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a tools/run_x11_audit.sh \
   emberwood.PerformanceAudit
 ```
 
-On a real desktop, omit the `env ... tools/run_x11_audit.sh` prefix. The isolated
+On a real Linux desktop, omit the `env ... tools/run_x11_audit.sh` prefix. The isolated
 X11 setup needs Xvfb, Openbox and `xprop`; native keyboard injection uses Python 3
 and the platform's input APIs. The X11 environment is
 necessary when using Xvfb from a Wayland session, so Java's Robot captures the
 isolated X11 display instead of opening a desktop screencast portal. The audit
 uses synchronous painting and a screen capture; `Robot.waitForIdle()` would wait
 behind continuous animation and distort command timing.
+
+On macOS, build the package and run the unchanged game/runtime through its
+actual application launcher:
+
+```sh
+python3 tools/mac_app_profile.py --audit performance --soak-seconds 180
+```
+
+Use `--app "/absolute/path/Emberwood Kotlin.app"` to measure the cached source
+app. The driver makes an isolated test copy, preserves the runtime/JAR bytes and
+shared signing policy, and supplies the same 128 MiB heap/two-processor limits.
+Its external controller owns test-only input/capture permissions. Raw `java`
+startup is retained only as a diagnostic comparison; it is not the Mac source
+launcher or the final native-app performance route.
 
 Keyboard injection runs through the shared persistent `PhysicalKeys` helper,
 separately from AWT's X11 lock; independent AWT event receipts still establish
@@ -54,7 +115,7 @@ The audit requires at least 45 painted frames/second, mean painting within a
 menus must make no simulation progress and repaint no more than twice a second.
 Retained heap growth after collection must stay below 16 MiB across the soak.
 
-## Baseline and follow-up
+## Investigation history: baseline and follow-up
 
 The first valid Linux/Xvfb run used Temurin 25.0.5, a 1152×648 content area, a
 128 MiB maximum heap and two processors visible to the JVM. All rendered regions,
@@ -106,12 +167,11 @@ rows passed. Evidence is retained in `build/performance-scaled-long/`, including
 the independent host sample and exact pixel comparisons. A dedicated platform
 run or repeat under suitable conditions must resolve the remaining scene checks.
 
-The final verification report must record the optimized build's measurements and
-actual native platform runs. macOS and other hardware remain unverified by this
-Linux baseline. No finite test establishes performance on every low-resource
-machine.
+This Linux baseline did not verify macOS or other hardware. The subsequent
+native-platform measurements are retained below; the current build's results
+appear first so historical failures cannot be mistaken for its present status.
 
-## Native macOS measurements
+## Earlier raw-JVM macOS measurements
 
 The subsequent macOS CI runs completed the full audit on both native
 architectures with the same 128 MiB heap and two-processor JVM configuration.
@@ -432,9 +492,19 @@ The slowest active windows were 61.960 and 61.956 frames/s; the highest mean
 paint costs were 1.782 and 2.151 ms. Both retain the 128 MiB maximum heap,
 two visible processors and 1152×648 content area. As in the prior CI run, these
 performance hosts had no audio output line, and process RSS was not recorded.
-Separate final x86-64 source/bundle PCM at the same hash passes all 28 physical
-sound-control cases, as documented in `AUDIO.md`; that evidence does not silently
-extend to ARM64. The private virtual-output CI is intended to close that gap.
+Separate final private-output CI `43716755578`, at the same game hash, passes
+all 56 physical sound-control cases across source/bundled runtimes on x86-64 and
+ARM64. All 336 WAVs and their waveform sheets were independently reviewed, as
+documented in `AUDIO.md`. This closes application-output coverage on ARM64; it
+does not retroactively add audio CPU cost to the performance measurements above.
 
 Evidence: `build/ci-final-8828-linux-{x64,arm64}/build/performance/independent-review/`,
 including metric checks, exact frame hashes and the visual journal.
+
+The final dependency-aware installer package/audio repeat `43719750356` also
+passes all 56 physical sound cases, with all 336 WAVs independently reviewed.
+Package review confirms identical production JAR/runtime bytes relative to these
+full-control/performance artifacts. Its updated installer, package checksums,
+PCM and physical-close evidence are retained separately in
+`build/ci-audio-dependencies-linux-{x64,arm64}/`; the earlier measurements above
+are not relabeled as new performance runs.

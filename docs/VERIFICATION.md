@@ -43,13 +43,13 @@ desktop mix. Java audio flags alone do not satisfy this check.
 
 - Original resources: **passed**. SHA-256 checks cover all 2,107 migrated files;
   level data contains 20 levels, 60 acorns and 378 gems.
-- Installer fixtures: **passed**. Six tests cover first install, replacement,
+- Installer fixtures: **passed**. Seven tests cover first install, replacement,
   removal, difficult paths through real Gio, unrelated-directory preservation,
   invalid/offline JDK errors, bad checksums and interrupted-install rollback.
 - Bootstrap: **passed**. Empty-cache Java download, checksum, extraction and
   offline reuse were exercised without changing system Java.
 - Kotlin formatting: **passed**. The current production candidate is formatted with ktlint.
-- Build, lint and automated tests: **passed**, 43 tests. The simulation campaign
+- Build, lint and automated tests: **passed**, 50 tests. The simulation campaign
   reaches all 20 levels, all 60 acorns and 20 hidden fireflies, all six guardians
   and all 13 equipment unlocks with zero retries. Optional gems collected by this
   route: 196 of 378. This is simulation evidence, not a physical-input playthrough.
@@ -65,6 +65,22 @@ desktop mix. Java audio flags alone do not satisfy this check.
 - Linux installation and native launcher: **passed** with invalid global Java
   and internet socket creation blocked. The separate application opens through
   the desktop registry and closes using physical Alt+F4. See PACKAGING.md.
+- Final Linux installer integration: **passed on both architectures** in run
+  43719750356. Both source and packaged routes repeat all fourteen physical audio
+  cases and the real-main Start/move/jump/pause/Alt+F4 sequence. All 336 analyzed
+  WAVs and 36 original game/closed-desktop frames were independently inspected;
+  all four game processes exit 0. Package review verifies the unchanged game and
+  complete runtime bytes, symlinks and modes against the full-control baseline.
+  Records: `build/ci-audio-dependencies-linux-{x64,arm64}/`, under
+  `build/audio-linux/{source,packaged}/` and `package-review.json`.
+- Clean Linux dependency recovery: **passed on both architectures** in run
+  43720498665. Disposable Ubuntu 24.04 containers start with missing desktop
+  libraries and empty package indexes, refuse an offline first run clearly,
+  install actual dependencies, load Java and the bundled fonts, then reuse them
+  offline without another package-manager action. The containers are removed;
+  host libraries are unchanged. Records:
+  `build/ci-dependencies-linux-{x64,arm64}/dependency-container/`. These headless
+  dependency checks are separate from the actual desktop-control proof.
 - Zed onboarding: **passed in Zed 1.28.1** with isolated editor data. The actual
   task picker loads Play Emberwood Kotlin; selecting it launches the game. Return,
   movement, jump, pause and window close were exercised in that launched window.
@@ -108,8 +124,14 @@ desktop mix. Java audio flags alone do not satisfy this check.
   one of the 1,208 frames per run is covered by disjoint, hash-verified journals.
   Consolidated ARM records are under `build/ci-final-8828-linux-arm64/build/`,
   in `audit/controls-reviewed.tsv` and `audit-packaged/controls-reviewed.tsv`.
-  That CI host had no output device. Actual ARM audio and physical window close
-  remain pending the separate private-output PCM and real-main smoke checks.
+  That original CI host had no output device. Run 43716755578 now completes
+  exact-build ARM output and physical close: fourteen physical audio cases and
+  84 analyzed WAVs per runtime, plus real MainKt Alt+F4, exit 0 and an empty
+  desktop. Independent waveform and original-frame review records are in
+  `build/ci-audio-final-linux-arm64/build/audio-linux/{source,packaged}/`, under
+  `independent-review/` and `game-smoke/`. Capture uses only game output through
+  a private virtual PipeWire sink; no speaker-hardware claim is made. Short
+  residual tails in three ARM source mute-cutoff captures remain documented.
 - Linux control baseline d5499672: **all 280 rows passed** on source and bundled
   runtimes, including inspection of all 1,198 referenced frames per run, separated
   projectile supplements for all five weapons, actual fourteen-case audio output,
@@ -125,6 +147,42 @@ desktop mix. Java audio flags alone do not satisfy this check.
   Source and bundled 0d3d runs each completed all 280 automatic cases and exited 0;
   their manual review stopped when the final constructor-order preservation changed
   the JAR. Those incomplete reviews do not establish a final-build pass.
+- Final Mac ARM native app: **all 280 control rows passed**, with all 1,208
+  referenced frames inspected and hashed. Fourteen physical M/Sound cases and
+  84 game-only PCM recordings pass separate independent review. Real installed
+  and source-launched apps show the original icon, open without a permission
+  dialog, and close through physical Command+Q with no forced termination.
+  Both native source and packaged 180-second performance profiles pass.
+  Evidence: `build/ci-native-final-macos-arm/`, including the control
+  `REVIEW.md`, `package-review.json`, both launch reviews, and independent
+  performance/audio review folders. Complete app-tree identity justifies the
+  source column's explicit **SHARED PROOF**; it does not claim a second physical
+  source inventory. Captured audio continuity findings remain in the audio
+  journal, including one 11.604 ms interval during final cue decay; this is not
+  a claim of flawless audio or speaker-hardware testing.
+- Final Intel Mac control attempt: **failed before input**. Screenshot color
+  conversion changed the test marker from RGB(251,1,4) to (250,3,1), so all 279
+  attempted before-frame checks and the final lifecycle capture timed out. The
+  retained title/paused screenshots show normal game windows, but this attempt
+  supplies no physical control coverage; audio was skipped. The test-only
+  monochrome nonce correction now passes actual startup/frame checks in focused
+  run 43720497291. All 26 cases and 108 referenced frames were inspected; 25 pass,
+  while Left-arrow retains a capture-overrun failure: the 2897.8 ms screenshot
+  delay let the visible fox reach the left edge outside the observer's old scan
+  region. Actual direction is correct; the failed observer row still needs
+  correction and retest. No complete Intel control pass is inferred. The focused
+  review is under `build/ci-native-intel-marker-88283267/`. Evidence: `build/ci-native-final-macos-intel/build/controls-native-app/`
+  and its `presentation-failure-review.md`. Both actual source/package
+  180-second performance profiles pass independent review of all 58 frames;
+  Intel's early blank packaged startup capture is retained alongside the later
+  normally rendered title and measured scenes. Ordinary source/installed launch
+  and physical Command+Q also pass ten separately inspected original frames,
+  without promoting the failed control inventory. Separately, audio-only
+  run 43719992137 now passes all fourteen physical M/Sound cases and 84 game-only
+  PCM recordings on the same final game/runtime. Its two waveform sheets and two
+  cleanup desktops were independently inspected; evidence is under
+  `build/ci-audio-trace-macos-intel/audio-native-app/pcm/independent-review/`.
+  This does not inherit control coverage from the failed run.
 - First actual Mac ARM application control run: **failed** on the d549 baseline.
   All 280 rows completed; 18 failed rows plus one pointer-cleanup error remain
   preserved in `build/ci-mac-native-controls-first/`. A camera-boundary fixture,
@@ -133,11 +191,9 @@ desktop mix. Java audio flags alone do not satisfy this check.
   passed all automatic checks; every frame was inspected. Its 25 input rows show
   correct motion, dash, M press/release and focus recovery, with raw OS/AWT receipts.
   The lifecycle image exposed a resize/capture race, now fixed in the test harness
-  and awaiting the full native-app rerun. Evidence: `build/ci-mac-targeted-88283267/`.
-  This filtered diagnostic does not establish all 280 Mac rows.
-- Final Linux ARM audio/physical-close coverage, Mac full native controls, source-launch
-  equivalence, performance and installed execution: **pending final runs/review**. See PERFORMANCE.md for measurements and
-  rejected experiments; no failed measurement is being labeled passed.
+  and verified by the final full ARM native-app rerun. Historical evidence:
+  `build/ci-mac-targeted-88283267/`. That filtered diagnostic alone did not
+  establish all 280 Mac rows.
 
 ## Review findings corrected
 
@@ -160,7 +216,7 @@ desktop mix. Java audio flags alone do not satisfy this check.
   The task now uses supported reveal/hide settings, verified in the editor itself.
 - Paused and result menus drew gameplay instructions underneath their own footer.
   The gameplay footer is now hidden in menus; results retain an explicit M/sound
-  hint. The rebuilt candidate is undergoing a fresh visual control audit.
+  hint. Every final Linux and Mac ARM control frame was inspected after this fix.
 - A blocked audio provider could hang window disposal. Initializing devices are
   no longer published to UI controls, and native close runs outside the interface
   thread. Two regression tests exercise blocked initialization and blocked native
@@ -171,16 +227,19 @@ desktop mix. Java audio flags alone do not satisfy this check.
   shape. Its new physical-input regression brings the inventory to 280 cases.
 - Intel Mac startup exposed Java Sound's recording-device probing during output
   initialization. A playback-only AudioQueue backend replaces that Mac path;
-  seven native-callback regression tests pass, while real Mac ABI, startup,
-  lifecycle and captured-PCM checks are still in progress. Missing native
+  seven native-callback regression tests pass. Native ABI, startup, lifecycle and captured-PCM
+  checks pass on both Mac architectures; Intel
+  control review remains open. Missing native
   libraries and failed output resets now become explicit audio-unavailable
   states without letting mute or window close hang the interface.
 
 The current local candidate JAR is
 `88283267eefaf417da4965a1248c1b70b9188effd71f6ee3f69cc2c1911e5bc1`.
 Separate `ktlintFormat`, then `check fatJar`, completed successfully with all
-43 tests. The complete native campaign and clean-exit evidence remains pinned to
-the d5499672 JAR; the earlier ce6f5af4 campaign remains available as historical evidence.
+50 tests. The final-commit CI campaign completes all twenty levels at `cacc4dc`;
+its successful job did not preserve a separate Java/wrapper numeric exit receipt.
+The instrumented d5499672 baseline supplies that separate clean-exit breakdown,
+and the earlier ce6f5af4 campaign remains historical evidence.
 Native playthrough attempts use ordinary input and real campfire retries;
 every retry is retained in their results, and no state fixture or teleport counts
 as campaign progress.

@@ -117,6 +117,8 @@ class Controller:
         return result
 
     def capture(self, pid, rectangle, path):
+        request_started = time.monotonic()
+        request_epoch_ns = time.time_ns()
         self.identify(pid)
         path = Path(path).resolve()
         if not path.is_relative_to(self.output) or path.suffix != ".png":
@@ -143,6 +145,7 @@ class Controller:
                 raise ValueError(
                     "Requested capture rectangle extends outside the exact game window"
                 )
+        preflight_finished = time.monotonic()
         with self.capture_lock:
             started = time.monotonic()
             self.capture_image(pid, window, rectangle, path)
@@ -155,6 +158,15 @@ class Controller:
                             "rectangle": rectangle,
                             "path": str(path),
                             "milliseconds": (time.monotonic() - started) * 1000,
+                            "request_epoch_ns": request_epoch_ns,
+                            "preflight_milliseconds": (
+                                preflight_finished - request_started
+                            )
+                            * 1000,
+                            "lock_wait_milliseconds": (started - preflight_finished)
+                            * 1000,
+                            "total_milliseconds": (time.monotonic() - request_started)
+                            * 1000,
                         }
                     )
                     + "\n"

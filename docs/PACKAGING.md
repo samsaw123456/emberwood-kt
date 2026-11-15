@@ -258,3 +258,54 @@ tree digest remained
 `a72adb7142f5e7dcaefa535143074f9a8848f42f83ddc4f1b138083235f8c8a4`, and the game JAR
 remained `88283267`. Receipts are `build/package-shared-{before,after}.json` and
 `build/install-shared-88283267.log`; the installed user app was refreshed.
+
+The shared desktop-dependency check was then packaged and installed locally.
+Install/upgrade/removal passed again, and both the actual Gio-installed entry and
+`./emberwood-kotlin --offline` opened with internet sockets denied. Their original
+title, movement, pause and physical Alt+F4/closed frames were inspected; receipts
+are in `build/installed-dependency-recovery/` and
+`build/source-dependency-recovery/`. The game and runtime bytes remain unchanged.
+Both native jobs in run `43719750356` passed this installer revision's package
+checks. Independent archive review verified all four checksums, current helper,
+installer and README, correct ELF/Debian architecture and all original assets.
+Every runtime file, symlink target and mode matches the full-control baseline;
+each portable app also matches its Debian app tree. Receipts are under
+`build/ci-audio-dependencies-linux-{x64,arm64}/package-review.json`; actual PCM and
+main-app visual reviews remain separate evidence.
+
+`Verify clean Linux dependency recovery` separately exercises an official,
+disposable Ubuntu 24.04 Docker image on both architectures. It starts with empty
+package indexes, requires missing-library offline refusal, runs actual apt
+recovery, loads the real game's bundled fonts, then checks network-free reuse
+without another package-manager action. The app is mounted read-only and host
+libraries are untouched. Run `43720498665` passed on both architectures: seven
+initially missing library names, correct t64 selection after index refresh,
+21 newly installed packages with zero upgrades or removals, actual Java 25 and
+bundled-font initialization, and unchanged apt history on the healthy offline
+repeat. The automatically removed owned containers were confirmed absent.
+Original logs and independent reviews are under
+`build/ci-dependencies-linux-{x64,arm64}/dependency-container/`. This container has
+no display; actual desktop/input checks are separate. The earlier local Ubuntu
+Base attempt remains recorded as incomplete because its single-ID namespace
+could not perform a package postinstall's group change.
+
+## Final native Mac package comparison
+
+Run `43715704373` passed installation, signature checks, offline source launch and
+physical Command+Q on both architectures. All ten original launch/Dock/pause/quit
+images per architecture were independently inspected: ordinary game windows,
+legible text, the migrated fox icon, no permission dialog and no window left after
+quit. The exact receiving process and released Command modifier were verified;
+cleanup needed no termination signal. This launch smoke does not replace the full
+command inventory or sound-output audit.
+
+The original ZIP checksums, Mach-O architectures, metadata and all 2,107 imported
+asset files were verified. The complete signed app trees also match the cached
+source apps exactly, including launcher, configuration, icon and runtime:
+`cfa85fd9f850eb028e15734907c84d3db8f3970a6425b11fbe8a4cbbeff2022b` on Apple Silicon
+and `2df70a9f30706428f1f3ae86b4e315a17ad219c679bc21fe5c7cf5446dd4d4ab` on Intel.
+Evidence is in `build/ci-native-final-macos-{arm,intel}/package-review.json` and
+each launch directory's `independent-launch-review` journal. Apple Silicon's job
+completed; Intel's full control run rejected its test presentation marker after
+native color conversion, so its final audio step was skipped. Those remaining
+checks require a corrected test harness and actual rerun, not an inferred pass.

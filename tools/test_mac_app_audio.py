@@ -14,6 +14,7 @@ from mac_app_profile import (
     launch_audio,
     main,
     run_owned_check,
+    tree_digest,
     validate_audio,
     validate_audio_trace,
 )
@@ -93,7 +94,12 @@ def fixture(output, app):
 
 class NativeAudioDriverTests(unittest.TestCase):
     def test_audio_mode_uses_selected_app_shared_signer_and_after_run_identity(self):
-        for tamper, audio_trace in ((False, False), (False, True), (True, True)):
+        for tamper, audio_trace in (
+            (False, False),
+            (False, True),
+            ("copied-runtime", True),
+            ("original-config", False),
+        ):
             with (
                 self.subTest(tamper=tamper, audio_trace=audio_trace),
                 tempfile.TemporaryDirectory() as directory,
@@ -119,6 +125,7 @@ class NativeAudioDriverTests(unittest.TestCase):
                 (tests / "AudioStateFixture.class").write_bytes(b"class fixture")
                 output = root / "audio evidence"
                 commands = []
+                original_digest = tree_digest(app)
 
                 def native_command(
                     command, *, commands=commands, app=app, root=root, **_options
@@ -154,9 +161,13 @@ class NativeAudioDriverTests(unittest.TestCase):
                         trace_fixture(output)
                     else:
                         self.assertNotIn("audio.trace.directory", text)
-                    if tamper:
+                    if tamper == "copied-runtime":
                         (copy / "Contents/runtime/Contents/Home/bin/java").write_bytes(
                             b"changed"
+                        )
+                    elif tamper == "original-config":
+                        (app / "Contents/app/Emberwood Kotlin.cfg").write_text(
+                            "changed launcher configuration"
                         )
                     return {"result": "PASS", "cases": 14}
 
@@ -185,7 +196,12 @@ class NativeAudioDriverTests(unittest.TestCase):
                     patch("mac_app_profile.launch_audio", side_effect=audited),
                 ):
                     if tamper:
-                        with self.assertRaisesRegex(RuntimeError, "changed production"):
+                        message = (
+                            "changed original app tree"
+                            if tamper == "original-config"
+                            else "changed production"
+                        )
+                        with self.assertRaisesRegex(RuntimeError, message):
                             main()
                     else:
                         main()
@@ -193,6 +209,14 @@ class NativeAudioDriverTests(unittest.TestCase):
                 evidence = json.loads((output / "native-app.json").read_text())
                 self.assertEqual(evidence["result"], "FAIL" if tamper else "PASS")
                 self.assertEqual(evidence["original_app"], str(app.resolve()))
+                self.assertEqual(evidence["original_app_tree_sha256"], original_digest)
+                self.assertEqual(
+                    evidence["original_app_tree_sha256_after"], tree_digest(app)
+                )
+                self.assertEqual(
+                    evidence["original_app_tree_sha256_after"] == original_digest,
+                    tamper != "original-config",
+                )
                 self.assertEqual(
                     evidence["audio_trace_directory"],
                     str(output / "trace") if audio_trace else None,

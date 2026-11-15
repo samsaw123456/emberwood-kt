@@ -36,6 +36,7 @@ private class NativeAudit(
     private val evidence = mutableListOf<String>()
     private val pendingImages = mutableListOf<Pair<String, BufferedImage>>()
     private val presentationTimings = mutableListOf<String>()
+    private val presentationStages = mutableListOf<String>()
     private var presentationNonce = 65535
 
     private data class Delivery(
@@ -206,6 +207,10 @@ private class NativeAudit(
                 edt { keyReceipts.joinToString("\n", postfix = "\n") },
             )
             Files.writeString(
+                output.resolve("presentation-stages.jsonl"),
+                presentationStages.joinToString("\n", postfix = "\n"),
+            )
+            Files.writeString(
                 output.resolve("presentation-latency.tsv"),
                 "Case\tFrame\tPresentation milliseconds\n" + presentationTimings.joinToString("\n") + "\n",
             )
@@ -310,28 +315,57 @@ private class NativeAudit(
         // waitForIdle repeatedly waits for this continuously animated window and extends held input.
         val started = System.nanoTime()
         val nonce = sequence
+
+        fun stage(
+            name: String,
+            began: Long,
+            extra: String = "",
+        ) {
+            presentationStages.add(
+                "{\"case\":${NativeAuditTools.quote(currentCase)},\"frame\":${NativeAuditTools.quote(label)}," +
+                    "\"nonce\":$nonce,\"stage\":${NativeAuditTools.quote(name)},\"startedNanos\":$began," +
+                    "\"milliseconds\":${(System.nanoTime() - began) / 1e6}$extra}",
+            )
+        }
         edt {
             observe()
             presentationNonce = nonce
             frame.rootPane.paintImmediately(0, 0, frame.rootPane.width, frame.rootPane.height)
         }
+        stage("edt-paint", started)
+        val syncStarted = System.nanoTime()
         java.awt.Toolkit
             .getDefaultToolkit()
             .sync()
+        stage("toolkit-sync", syncStarted)
+        val boundsStarted = System.nanoTime()
         val bounds =
             edt {
                 val p = panel.locationOnScreen
                 java.awt.Rectangle(p.x, p.y, panel.width, panel.height)
             }
+        stage("edt-bounds", boundsStarted)
 
         // Cocoa may return the previous compositor frame after paintImmediately. A marker in the
         // same window proves presentation; it never intercepts input or changes game state.
-        fun capture() =
-            if (NativeAuditTools.hasExternalController) {
-                NativeAuditTools.capture(bounds, output.resolve("external-capture.png"))
-            } else {
-                checkNotNull(robot).createScreenCapture(bounds)
-            }
+        var attempt = 0
+
+        fun capture(): BufferedImage {
+            val captureStarted = System.nanoTime()
+            val image =
+                if (NativeAuditTools.hasExternalController) {
+                    NativeAuditTools.capture(bounds, output.resolve("external-capture.png"))
+                } else {
+                    checkNotNull(robot).createScreenCapture(bounds)
+                }
+            stage(
+                "capture-read",
+                captureStarted,
+                ",\"attempt\":${++attempt},\"observedNonce\":${PresentationMarker.readNonce(image)}," +
+                    "\"matched\":${PresentationMarker.matches(image, nonce)}",
+            )
+            return image
+        }
         var image = capture()
         await("Desktop presentation for $label") {
             if (PresentationMarker.matches(image, nonce)) {
@@ -571,24 +605,7 @@ private class NativeAudit(
 
     private fun focused() = edt { panel.actions[panel.focusIndex].id }
 
-    private fun foxCenter(image: BufferedImage): Pair<Double, Double> {
-        var xTotal = 0.0
-        var yTotal = 0.0
-        var count = 0
-        for (y in 170 until minOf(538, image.height)) {
-            for (x in 60 until minOf(1030, image.width)) {
-                val c = java.awt.Color(image.getRGB(x, y))
-                // Original fox's rust-orange palette, independent of model/camera coordinates.
-                if (abs(c.red - 181) <= 1 && abs(c.green - 66) <= 1 && abs(c.blue - 45) <= 1) {
-                    xTotal += x
-                    yTotal += y
-                    count++
-                }
-            }
-        }
-        check(count > 10) { "Fox's original orange pixels were not visible ($count)" }
-        return xTotal / count to yTotal / count
-    }
+    private fun foxCenter(image: BufferedImage) = FoxPixels.center(image)
 
     private fun directionCases() {
         for (scrolling in listOf(false, true)) {
@@ -605,12 +622,27 @@ private class NativeAudit(
                             panel.game.cameraX = x - 380
                         }
                     }
+
+                    fun interior(): Boolean {
+                        val game = panel.game
+                        return game.state == GameState.PLAYING && game.player.x > 40 && game.player.x < game.level.width - 40
+                    }
                     val before = foxCenter(snap("direction-start"))
                     down(key)
-                    delay(210)
-                    val after = foxCenter(snap("direction-held"))
-                    up(key)
+                    val after =
+                        try {
+                            delay(210)
+                            val position = foxCenter(snap("direction-held"))
+                            check(edt { interior() && abs(panel.game.player.vx) > 1 }) {
+                                "Capture overrun or blocked movement: release/braking needs a moving fox away from world boundaries"
+                            }
+                            position
+                        } finally {
+                            // A failed capture must release before case() takes another failure screenshot.
+                            up(key)
+                        }
                     await("Movement stops after release") { edt { abs(panel.game.player.vx) < .01 } }
+                    check(edt { interior() }) { "Movement reached a wall or left gameplay before braking could be observed" }
                     snap("direction-released")
                     check((after.first - before.first) * sign > if (scrolling) 4 else 20) {
                         "Rendered direction was ${after.first - before.first}, expected sign $sign"
