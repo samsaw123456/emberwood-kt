@@ -11,6 +11,14 @@ on:
           - macos-15
           - macos-15-intel
           - both
+      soak_seconds:
+        description: Soak duration (180 for verification, 30 for diagnosis)
+        type: choice
+        required: true
+        default: '180'
+        options:
+          - '180'
+          - '30'
 permissions:
   contents: read
 jobs:
@@ -37,7 +45,11 @@ jobs:
           ./gradlew --no-daemon check fatJar
           python3 tools/package_app.py --skip-build
       - name: Profile an isolated app through LaunchServices
-        run: python3 tools/mac_app_profile.py
+        env:
+          SOAK_SECONDS: ${{ inputs.soak_seconds }}
+        run: |
+          case "$SOAK_SECONDS" in 30|180) ;; *) exit 2 ;; esac
+          python3 tools/mac_app_profile.py --soak-seconds "$SOAK_SECONDS"
       - name: Retain native application measurements
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
