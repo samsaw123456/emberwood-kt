@@ -12,9 +12,13 @@ from unittest.mock import Mock, patch
 
 from mac_game_window import NativeWindowMissing
 from mac_main_movement import (
+    LiveSample,
     await_owned_window,
     await_title,
+    held_capture_callback,
     inspect_held_stream,
+    inspect_released_stream,
+    observe_recovery,
     observed_fox,
     owned_window,
     run_hold,
@@ -54,6 +58,237 @@ class Keyboard:
 
 
 class MainMovementTests(unittest.TestCase):
+    def test_stream_mode_queries_no_snapshot_until_after_early_recovery(self):
+        for key, delay in (("a", 0.6), ("left", 3.5)):
+            for mode in ("snapshot", "stream-only"):
+                with self.subTest(key=key, mode=mode):
+                    clock, captures = Clock(), []
+
+                    def capture(label, captures=captures, clock=clock):
+                        captures.append((label, clock()))
+                        return Path(label)
+
+                    during = held_capture_callback(mode, capture, key)
+                    if during is not None:
+                        during()
+                    with patch(
+                        "mac_main_movement.observed_fox", return_value=[215, 511]
+                    ):
+                        released, rested = observe_recovery(
+                            mode, key, capture, sleep=clock.sleep
+                        )
+                    self.assertEqual(rested, [215, 511])
+                    if mode == "stream-only":
+                        self.assertIsNone(during)
+                        self.assertIsNone(released)
+                        self.assertEqual(captures, [(f"{key}-rested", 100 + delay)])
+                    else:
+                        self.assertEqual(released, [215, 511])
+                        self.assertEqual(
+                            [r[0] for r in captures],
+                            [
+                                f"{key}-held-snapshot",
+                                f"{key}-released",
+                                f"{key}-rested",
+                            ],
+                        )
+                        self.assertAlmostEqual(captures[1][1], 100.3)
+                        self.assertAlmostEqual(
+                            captures[2][1], 100.6 if key == "a" else 103.8
+                        )
+
+    def test_stream_release_requires_early_presented_interior_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            (output / "capture-trace").mkdir()
+            movement = {
+                "input": {"key": "left", "up_observed": 100.35},
+                "before": [300, 511],
+                "rested": [215, 511],
+            }
+            for pts, point, accepted in (
+                (100.4, [215, 511], False),  # Too early to prove recovery.
+                (103.6, [215, 511], False),  # A late fresh frame cannot fill a gap.
+                (100.65, [300, 511], False),  # Stale scene despite in-range PTS.
+                (100.65, [11, 511], False),  # Wall stopping is not braking.
+                (100.65, [223, 511], False),  # More than 6px drift after release.
+                (100.65, [215, 490], False),  # Changed ground cannot be accepted.
+                (100.65, [215, 511], True),
+            ):
+                row = {"image": "sample.png", "presentation_seconds": pts}
+                (output / "capture-trace/frames.jsonl").write_text(
+                    json.dumps(row) + "\n"
+                )
+                with patch("mac_main_movement.observed_fox", return_value=point):
+                    if accepted:
+                        proof = inspect_released_stream(output, [movement])
+                        self.assertEqual(proof[0]["samples"][0]["fox"], point)
+                        self.assertEqual(movement["released"], point)
+                    else:
+                        with self.assertRaises(RuntimeError):
+                            inspect_released_stream(output, [movement])
+            rows = [
+                {"image": f"{i}.png", "presentation_seconds": pts}
+                for i, pts in enumerate((100.65, 100.75))
+            ]
+            (output / "capture-trace/frames.jsonl").write_text(
+                "\n".join(map(json.dumps, rows))
+            )
+            with (
+                patch(
+                    "mac_main_movement.observed_fox",
+                    side_effect=[[215, 511], [240, 511]],
+                ),
+                self.assertRaisesRegex(RuntimeError, "recover to rest"),
+            ):
+                inspect_released_stream(output, [movement])
+
+    def test_native_sample_is_exact_pid_nonblocking_and_records_completed_trace(self):
+        with tempfile.TemporaryDirectory(prefix="sample path spaces ") as directory:
+            output = Path(directory)
+            process = Mock(pid=123, returncode=0)
+            windows = SimpleNamespace(
+                executable=Mock(return_value=Path("/owned app/game"))
+            )
+            sample = LiveSample(output, windows, 42, Path("/owned app/game"))
+            with patch(
+                "mac_main_movement.subprocess.Popen", return_value=process
+            ) as popen:
+                sample.start()
+            process.wait.assert_not_called()
+            self.assertEqual(
+                popen.call_args.args[0],
+                [
+                    "/usr/bin/sample",
+                    "42",
+                    "3",
+                    "1",
+                    "-file",
+                    str(output / "live-sample.txt"),
+                ],
+            )
+            (output / "live-sample.txt").write_text("native owned sample\n")
+            sample.finish()
+            sample.finish()  # Cleanup is safe after the normal completion path.
+            process.wait.assert_called_once_with(timeout=5)
+            self.assertTrue(sample.log.closed)
+            receipt = json.loads((output / "live-sample.json").read_text())
+            self.assertEqual(receipt["result"], "PASS native sample captured")
+            self.assertEqual(receipt["returncode"], 0)
+            self.assertEqual(len(receipt["trace_sha256"]), 64)
+
+    def test_native_sample_rejects_wrong_identity_and_cleans_only_its_sampler(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            windows = SimpleNamespace(executable=Mock(return_value=Path("/other")))
+            sample = LiveSample(output, windows, 42, Path("/owned"))
+            with (
+                patch("mac_main_movement.subprocess.Popen") as popen,
+                self.assertRaisesRegex(RuntimeError, "exact executable"),
+            ):
+                sample.start()
+            popen.assert_not_called()
+            windows.executable.return_value = Path("/owned")
+            process = Mock(pid=123, returncode=-15)
+            process.wait.side_effect = subprocess.TimeoutExpired("sample", 5)
+            with patch("mac_main_movement.subprocess.Popen", return_value=process):
+                sample.start()
+            with (
+                patch("mac_main_movement.stop_owned") as stop,
+                self.assertRaisesRegex(RuntimeError, "bounded duration"),
+            ):
+                sample.finish()
+            stop.assert_called_once_with(process)
+            self.assertTrue(sample.log.closed)
+            receipt = json.loads((output / "live-sample.json").read_text())
+            self.assertEqual(receipt["result"], "FAIL")
+            self.assertTrue(receipt["forced_sampler_cleanup"])
+
+    def test_sample_is_armed_after_worker_ready_and_before_go(self):
+        real_popen = subprocess.Popen
+        child = (
+            "import json,sys,time\nfrom pathlib import Path\n"
+            "spec=json.loads(sys.argv[1]);out=Path(spec['output']).parent\n"
+            "(out/'ready').write_text('ready');print('READY',flush=True)\n"
+            "assert sys.stdin.readline().strip()=='GO'\n"
+            "assert (out/'armed').read_text()=='armed'\n"
+            "down=time.monotonic();time.sleep(spec['seconds']);up=time.monotonic()\n"
+            "Path(spec['output']).write_text(json.dumps({'result':'PASS bounded physical hold','down':down,'up':up}))\n"
+        )
+
+        def spawn(command, **kwargs):
+            return real_popen([sys.executable, "-c", child, command[-1]], **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+
+            def arm():
+                self.assertEqual((output / "ready").read_text(), "ready")
+                time.sleep(0.1)  # Observation startup must not consume the hold.
+                (output / "armed").write_text("armed")
+
+            with patch("mac_main_movement.subprocess.Popen", side_effect=spawn):
+                receipt = run_hold(
+                    output, 42, Path("/owned"), 7, "left", 0.35, "left", before_go=arm
+                )
+            self.assertGreater(receipt["up"] - receipt["down"], 0.34)
+            self.assertLess(receipt["up"] - receipt["down"], 0.45)
+
+    def test_sample_missing_output_or_failure_cannot_pass(self):
+        for code, contents in ((0, None), (0, ""), (1, "partial sample")):
+            with (
+                self.subTest(code=code, contents=contents),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                output = Path(directory)
+                sample = LiveSample(
+                    output,
+                    SimpleNamespace(executable=lambda _: Path("/owned")),
+                    42,
+                    Path("/owned"),
+                )
+                with patch(
+                    "mac_main_movement.subprocess.Popen",
+                    return_value=Mock(pid=123, returncode=code),
+                ):
+                    sample.start()
+                if contents is not None:
+                    (output / "live-sample.txt").write_text(contents)
+                with self.assertRaisesRegex(RuntimeError, "successful trace"):
+                    sample.finish()
+                self.assertTrue(sample.log.closed)
+                self.assertEqual(
+                    json.loads((output / "live-sample.json").read_text())["result"],
+                    "FAIL",
+                )
+
+    def test_failed_observation_arming_sends_no_go_or_emergency_key(self):
+        process = Mock()
+        process.stdout.readline.return_value = "READY\n"
+        process.poll.return_value = 0
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("mac_main_movement.subprocess.Popen", return_value=process),
+            patch(
+                "mac_main_movement.select.select",
+                return_value=([process.stdout], [], []),
+            ),
+            patch("mac_main_movement.NativeKeys") as keys,
+            self.assertRaisesRegex(RuntimeError, "cannot sample"),
+        ):
+            run_hold(
+                Path(directory),
+                42,
+                Path("/owned"),
+                7,
+                "left",
+                0.35,
+                "left",
+                before_go=Mock(side_effect=RuntimeError("cannot sample")),
+            )
+        process.stdin.write.assert_not_called()
+        keys.assert_not_called()
+
     def test_late_owned_window_is_observed_before_readiness(self):
         clock = Clock()
         window = {"id": 7, "bounds": [0, 0, 1152, 676]}

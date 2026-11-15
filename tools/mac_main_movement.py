@@ -201,7 +201,9 @@ def input_worker(raw):
             write_json(Path(spec["output"]), record)
 
 
-def run_hold(output, pid, executable, window, key, seconds, label, during=None):
+def run_hold(
+    output, pid, executable, window, key, seconds, label, during=None, before_go=None
+):
     destination = output / f"input-{label}.json"
     spec = {
         "pid": pid,
@@ -231,6 +233,8 @@ def run_hold(output, pid, executable, window, key, seconds, label, during=None):
                 or process.stdout.readline().strip() != "READY"
             ):
                 raise RuntimeError("Owned input worker did not become ready")
+            if before_go is not None:
+                before_go()  # Arm observation only after the worker's AX guard.
             go_attempted = True  # A failed flush can still follow delivered GO.
             process.stdin.write("GO\n")
             process.stdin.flush()
@@ -267,6 +271,99 @@ def run_hold(output, pid, executable, window, key, seconds, label, during=None):
             process.stdout.close()
 
 
+def held_capture_callback(mode, capture, key):
+    if mode == "snapshot":
+        return lambda: capture(f"{key}-held-snapshot")
+    if mode == "stream-only":
+        return None  # Independent SCStream still records pixels during the hold.
+    raise ValueError("Unknown held-capture mode")
+
+
+class LiveSample:
+    """Bounded native stack observation of the exact already-owned game PID."""
+
+    def __init__(self, output, windows, pid, executable):
+        self.output, self.windows = output, windows
+        self.pid, self.executable = pid, executable
+        self.process, self.log = None, None
+        self.record = {
+            "result": "NOT_STARTED",
+            "pid": pid,
+            "executable": str(executable),
+            "scope": "Native sample only; adds observation overhead, not a performance measurement",
+        }
+
+    def start(self):
+        if self.process is not None:
+            raise RuntimeError("The owned native sample was already started")
+        if self.windows.executable(self.pid) != self.executable:
+            raise RuntimeError("Native sample PID does not have the exact executable")
+        command = [
+            "/usr/bin/sample",
+            str(self.pid),
+            "3",
+            "1",
+            "-file",
+            str(self.output / "live-sample.txt"),
+        ]
+        self.record.update(
+            result="RUNNING",
+            argv=command,
+            start_monotonic=time.monotonic(),
+            start_epoch_ns=time.time_ns(),
+        )
+        try:
+            self.log = (self.output / "live-sample.log").open("w")
+            self.process = subprocess.Popen(
+                command, stdout=self.log, stderr=subprocess.STDOUT
+            )
+            self.record["launched_monotonic"] = time.monotonic()
+            self.record["sampler_pid"] = self.process.pid
+        except Exception as error:
+            self.record.update(result="FAIL", error=str(error))
+            if self.log is not None:
+                self.log.close()
+            raise
+        finally:
+            write_json(self.output / "live-sample.json", self.record)
+
+    def finish(self):
+        if self.process is None or self.record["result"] != "RUNNING":
+            return
+        try:
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.record["forced_sampler_cleanup"] = True
+                stop_owned(self.process)
+                raise RuntimeError("Owned native sample exceeded its bounded duration")
+            self.record["returncode"] = self.process.returncode
+            path = self.output / "live-sample.txt"
+            if (
+                self.process.returncode != 0
+                or not path.is_file()
+                or not path.stat().st_size
+            ):
+                raise RuntimeError(
+                    "Owned native sample did not produce a successful trace"
+                )
+            self.record.update(
+                result="PASS native sample captured",
+                trace_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+        except Exception as error:
+            self.record.update(result="FAIL", error=str(error))
+            raise
+        finally:
+            self.record.update(
+                returncode=self.process.returncode,
+                completion_observed_monotonic=time.monotonic(),
+                completion_observed_epoch_ns=time.time_ns(),
+            )
+            self.log.close()
+            write_json(self.output / "live-sample.json", self.record)
+
+
 def observed_fox(path):
     from PIL import Image
 
@@ -300,6 +397,21 @@ def validate_motion(before, released, rested):
         raise RuntimeError(
             "Ground position changed; damage, jump or respawn cannot count as movement proof"
         )
+
+
+def observe_recovery(mode, key, capture, *, sleep=time.sleep):
+    released = None
+    if mode == "snapshot":
+        sleep(0.3)
+        released = observed_fox(capture(f"{key}-released"))
+        sleep(0.3 if key == "a" else 3.5)
+    elif mode == "stream-only":
+        # Keep AX/snapshot queries out of the complete held and early-recovery
+        # interval; derive release pixels by PTS after the stream is drained.
+        sleep(0.6 if key == "a" else 3.5)
+    else:
+        raise ValueError("Unknown held-capture mode")
+    return released, observed_fox(capture(f"{key}-rested"))
 
 
 def inspect_held_stream(output, movements):
@@ -366,11 +478,53 @@ def inspect_held_stream(output, movements):
     return proof
 
 
+def inspect_released_stream(output, movements):
+    """Require presented recovery pixels while the controller avoids AX polling."""
+    records = [
+        json.loads(line)
+        for line in (output / "capture-trace/frames.jsonl").read_text().splitlines()
+    ]
+    proof = []
+    for movement in movements:
+        receipt = movement["input"]
+        low, high = receipt["up_observed"] + 0.2, receipt["up_observed"] + 0.5
+        observed = [
+            {
+                "frame": row["image"],
+                "pts": row["presentation_seconds"],
+                "fox": observed_fox(output / "capture-trace" / row["image"]),
+            }
+            for row in records
+            if row.get("image")
+            and row.get("presentation_seconds") is not None
+            and low <= row["presentation_seconds"] <= high
+        ]
+        row = {"key": receipt["key"], "interval": [low, high], "samples": observed}
+        proof.append(row)
+        write_json(output / "released-stream-proof.json", proof)
+        if not observed:
+            raise RuntimeError(
+                "No presented stream image in the early-release interval"
+            )
+        for sample in observed:
+            validate_motion(movement["before"], sample["fox"], movement["rested"])
+        movement["released"] = observed[0]["fox"]
+    return proof
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path)
     parser.add_argument(
         "--output", type=Path, default=ROOT / "build/main-movement-native-app"
+    )
+    parser.add_argument(
+        "--held-capture", choices=("snapshot", "stream-only"), default="snapshot"
+    )
+    parser.add_argument(
+        "--live-sample",
+        action="store_true",
+        help="Start a bounded own-PID native sample immediately before Left GO",
     )
     parser.add_argument("--input-worker", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -417,6 +571,8 @@ def main():
         "client_crop": CLIENT,
         "window_size": WINDOW_SIZE,
         "movements": [],
+        "held_capture": args.held_capture,
+        "live_sample_requested": args.live_sample,
         "scope": "Bounded real MainKt observation; no nonce, fixture, Java agent, forced painting or rendering override. A pass cannot exclude an intermittent stall.",
     }
     windows, native = GameWindow(), NativeStatus()
@@ -425,7 +581,7 @@ def main():
         raise RuntimeError(
             "The exact app is already running; it is not owned by this diagnostic"
         )
-    pid, launcher, controller = None, None, None
+    pid, launcher, controller, sampler = None, None, None, None
     try:
         controller = Controller(
             output, executable, capture_trace=True, capture_image_interval=0.1
@@ -443,6 +599,9 @@ def main():
             if pid is None:
                 raise RuntimeError("The exact native app did not appear")
             report["pid"] = pid
+            if args.live_sample:
+                sampler = LiveSample(output, windows, pid, executable)
+                report["live_sample"] = sampler.record
             window = await_owned_window(windows, pid, executable, launcher, output)
             report["window"] = window
 
@@ -483,7 +642,7 @@ def main():
                 return path
 
             before = observed_fox(capture("a-before"))
-            for key, recovery in (("a", 0.3), ("left", 3.5)):
+            for key in ("a", "left"):
                 if time.monotonic() - trace_started > (4.5 if key == "left" else 1.5):
                     raise RuntimeError(
                         "Insufficient bounded stream time for the next command"
@@ -496,13 +655,12 @@ def main():
                     key,
                     0.35,
                     key,
-                    lambda key=key: capture(f"{key}-held-snapshot"),
+                    held_capture_callback(args.held_capture, capture, key),
+                    sampler.start if key == "left" and sampler is not None else None,
                 )
-                time.sleep(0.3)
-                released = observed_fox(capture(f"{key}-released"))
-                time.sleep(recovery)
-                rested = observed_fox(capture(f"{key}-rested"))
-                validate_motion(before, released, rested)
+                released, rested = observe_recovery(args.held_capture, key, capture)
+                if released is not None:
+                    validate_motion(before, released, rested)
                 report["movements"].append(
                     {
                         "input": receipt,
@@ -522,6 +680,12 @@ def main():
             ):
                 raise RuntimeError("The fixed-window100ms stream scope changed")
             report["held_stream"] = inspect_held_stream(output, report["movements"])
+            if args.held_capture == "stream-only":
+                report["released_stream"] = inspect_released_stream(
+                    output, report["movements"]
+                )
+            if sampler is not None:
+                sampler.finish()
             owned_window(windows, pid, executable, window["id"])
             keyboard = NativeKeys()
             poster = ImmediateMacKeys(keyboard.core, keyboard.core)
@@ -567,6 +731,12 @@ def main():
             raise
         finally:
             try:
+                if sampler is not None:
+                    try:
+                        sampler.finish()
+                    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                        report["result"] = "FAIL"
+                        report["live_sample_error"] = str(error)
                 cleanup_app(pid, executable, windows, baseline, output)
                 report["cleanup"] = json.loads((output / "cleanup.json").read_text())
                 if report["result"] == "PARTIAL_PASS awaiting visual review" and (

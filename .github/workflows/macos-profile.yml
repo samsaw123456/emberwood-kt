@@ -25,6 +25,16 @@ on:
         required: true
         default: performance
         options: [performance, controls, controls-targeted, controls-capture, controls-buffering-compare, controls-scheduled, controls-opengl, main-movement, compare-launchers, audio, audio-trace]
+      held_capture:
+        description: Main movement only — snapshot or independent stream during the fixed hold
+        type: choice
+        required: true
+        default: snapshot
+        options: [snapshot, stream-only]
+      live_sample:
+        description: Main movement only — sample the owned app during Left
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -63,6 +73,8 @@ jobs:
         env:
           SOAK_SECONDS: ${{ inputs.soak_seconds }}
           AUDIT_KIND: ${{ inputs.audit }}
+          HELD_CAPTURE: ${{ inputs.held_capture }}
+          LIVE_SAMPLE: ${{ inputs.live_sample }}
         run: |
           case "$SOAK_SECONDS" in 30|180) ;; *) exit 2 ;; esac
           case "$AUDIT_KIND" in
@@ -79,7 +91,14 @@ jobs:
             controls-opengl)
               python3 tools/mac_app_profile.py --audit controls-capture --capture-trace --rendering-variant opengl ;;
             main-movement)
-              python3 tools/mac_main_movement.py --output build/main-movement-native-app ;;
+              case "$HELD_CAPTURE" in snapshot|stream-only) ;; *) exit 2 ;; esac
+              main_args=(--held-capture "$HELD_CAPTURE")
+              case "$LIVE_SAMPLE" in
+                true) main_args+=(--live-sample) ;;
+                false) ;;
+                *) exit 2 ;;
+              esac
+              python3 tools/mac_main_movement.py --output build/main-movement-native-app "${main_args[@]}" ;;
             compare-launchers)
               python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds "$SOAK_SECONDS" ;;
             *) exit 2 ;;
