@@ -21,6 +21,7 @@ from pathlib import Path
 
 from linux_game_smoke import fox_center, stop_owned, title_visible
 from mac_app_profile import app_pid, validate_capture_trace
+from mac_application_menu import inspect_application_menu
 from mac_audio_audit import capture_initialization_stacks
 from mac_bundle_smoke import ImmediateMacKeys, cleanup_app, physical_command_quit
 from mac_game_focus import require_game_window
@@ -526,6 +527,11 @@ def main():
         action="store_true",
         help="Start a bounded own-PID native sample immediately before Left GO",
     )
+    parser.add_argument(
+        "--inspect-app-menu",
+        action="store_true",
+        help="Physically inspect the application menu only after movement proof",
+    )
     parser.add_argument("--input-worker", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if platform.system() != "Darwin":
@@ -573,6 +579,7 @@ def main():
         "movements": [],
         "held_capture": args.held_capture,
         "live_sample_requested": args.live_sample,
+        "application_menu_requested": args.inspect_app_menu,
         "scope": "Bounded real MainKt observation; no nonce, fixture, Java agent, forced painting or rendering override. A pass cannot exclude an intermittent stall.",
     }
     windows, native = GameWindow(), NativeStatus()
@@ -686,6 +693,10 @@ def main():
                 )
             if sampler is not None:
                 sampler.finish()
+            if args.inspect_app_menu:
+                report["application_menu"] = inspect_application_menu(
+                    output / "application-menu", pid, executable, windows, window["id"]
+                )
             owned_window(windows, pid, executable, window["id"])
             keyboard = NativeKeys()
             poster = ImmediateMacKeys(keyboard.core, keyboard.core)

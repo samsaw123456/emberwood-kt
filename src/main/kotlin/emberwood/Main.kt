@@ -49,7 +49,23 @@ fun main(args: Array<String>) {
         } else {
             Settings.defaultDirectory()
         }
-    SwingUtilities.invokeLater { openWindow(Settings(directory)) }
+    SwingUtilities.invokeLater {
+        try {
+            openWindow(Settings(directory))
+        } catch (error: Throwable) {
+            error.printStackTrace()
+            try {
+                javax.swing.JOptionPane.showMessageDialog(
+                    null,
+                    "Emberwood Kotlin could not finish starting. Close this message and try launching the app again.",
+                    "Emberwood Kotlin could not start",
+                    javax.swing.JOptionPane.ERROR_MESSAGE,
+                )
+            } finally {
+                kotlin.system.exitProcess(1)
+            }
+        }
+    }
 }
 
 fun openWindow(settings: Settings): Pair<JFrame, GamePanel> {
@@ -60,6 +76,22 @@ fun openWindow(settings: Settings): Pair<JFrame, GamePanel> {
     frame.iconImages = listOf(Assets.image("assets/app/emberwood.png"))
     frame.minimumSize = Dimension(800, 600)
     frame.pack()
+    try {
+        MacApplicationMenu.configure()
+    } catch (error: Throwable) {
+        try {
+            panel.close()
+        } catch (cleanup: Throwable) {
+            error.addSuppressed(cleanup)
+        } finally {
+            try {
+                frame.dispose()
+            } catch (cleanup: Throwable) {
+                error.addSuppressed(cleanup)
+            }
+        }
+        throw IllegalStateException("Unable to prepare the application menu", error)
+    }
     frame.setLocationRelativeTo(null)
     frame.addWindowFocusListener(
         object : WindowAdapter() {

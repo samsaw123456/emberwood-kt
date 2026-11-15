@@ -35,6 +35,10 @@ on:
         description: Main movement only — sample the owned app during Left
         type: boolean
         default: false
+      inspect_app_menu:
+        description: Main movement only — physically inspect the app menu after movement passes
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -75,6 +79,7 @@ jobs:
           AUDIT_KIND: ${{ inputs.audit }}
           HELD_CAPTURE: ${{ inputs.held_capture }}
           LIVE_SAMPLE: ${{ inputs.live_sample }}
+          INSPECT_APP_MENU: ${{ inputs.inspect_app_menu }}
         run: |
           case "$SOAK_SECONDS" in 30|180) ;; *) exit 2 ;; esac
           case "$AUDIT_KIND" in
@@ -98,11 +103,22 @@ jobs:
                 false) ;;
                 *) exit 2 ;;
               esac
+              case "$INSPECT_APP_MENU" in
+                true) main_args+=(--inspect-app-menu) ;;
+                false) ;;
+                *) exit 2 ;;
+              esac
               python3 tools/mac_main_movement.py --output build/main-movement-native-app "${main_args[@]}" ;;
             compare-launchers)
               python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds "$SOAK_SECONDS" ;;
             *) exit 2 ;;
           esac
+      - name: Verify native menu identity and lifecycle
+        timeout-minutes: 2
+        run: >-
+          "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED
+          -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test
+          emberwood.MacApplicationMenuProbe build/mac-menu-probe
       - name: Retain native application measurements
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -115,6 +131,7 @@ jobs:
             build/controls-capture-native-app/
             build/controls-capture-comparison/
             build/main-movement-native-app/
+            build/mac-menu-probe/
             build/performance-launcher-comparison/
             build/audio-native-app/
             build/reports/tests/

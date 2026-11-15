@@ -73,6 +73,14 @@ jobs:
       - name: Capture only the native Mac game's output and audit every sound control
         if: ${{ success() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
         run: python3 tools/mac_app_profile.py --audit audio
+      - name: Verify native menu identity and lifecycle
+        id: mac_menu_probe
+        if: ${{ success() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
+        timeout-minutes: 2
+        run: >-
+          "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED
+          -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test
+          emberwood.MacApplicationMenuProbe build/mac-menu-probe
       - name: Audit controls through a real window on Linux
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
         run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh ./gradlew --no-daemon nativeAudit
@@ -88,6 +96,7 @@ jobs:
             build/audit/
             build/audit-packaged/
             build/bundle-launch-macos/
+            build/mac-menu-probe/
             build/source-mac-native/
             build/audio-native-app/
             build/performance/
