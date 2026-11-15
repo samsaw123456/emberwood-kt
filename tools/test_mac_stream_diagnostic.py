@@ -46,7 +46,12 @@ class NativeStreamDiagnosticTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=15,
-            check=True,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"Native stream fixture failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
         )
         self.assertIn("no capture or permission request", result.stdout)
         summary = json.loads((output / "summary.json").read_text())
