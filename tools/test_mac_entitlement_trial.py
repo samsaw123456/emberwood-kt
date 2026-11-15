@@ -1,16 +1,63 @@
 """Check entitlement-trial refusal paths without signing or launching a real app."""
 
+import json
 import plistlib
+import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mac_entitlement_trial import identity, requested_entitlements, sign_without_input
+from mac_entitlement_trial import (
+    identity,
+    main,
+    requested_entitlements,
+    sign_without_input,
+)
 
 
 class EntitlementTests(unittest.TestCase):
+    def test_changed_bytes_after_successful_pcm_fail_the_whole_trial(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "VERSION").write_text("0.1.0\n")
+            app = root / "dist/emberwood-kotlin-0.1.0-macos-x86_64/Emberwood Kotlin.app"
+            (app / "Contents/runtime").mkdir(parents=True)
+            (app / "Contents/runtime/java").write_bytes(b"original runtime")
+            (app / "Contents/app").mkdir(parents=True)
+            (app / "Contents/app/emberwood-kotlin.jar").write_bytes(b"original game")
+            output = root / "results"
+
+            def copy(command, **_kwargs):
+                self.assertEqual(command[0], "ditto")
+                shutil.copytree(command[1], command[2])
+
+            def run(app, _command, directory, _timeout):
+                if directory.name == "pcm-cleanup":
+                    (app / "Contents/runtime/java").write_bytes(b"changed after PCM")
+
+            with (
+                patch("mac_entitlement_trial.ROOT", root),
+                patch("mac_entitlement_trial.platform.system", return_value="Darwin"),
+                patch("mac_entitlement_trial.platform.machine", return_value="x86_64"),
+                patch(
+                    "mac_entitlement_trial.sys.argv", ["trial", "--output", str(output)]
+                ),
+                patch.dict("os.environ", {"JAVA_HOME": str(root / "jdk")}),
+                patch("mac_entitlement_trial.subprocess.run", side_effect=copy),
+                patch("mac_entitlement_trial.record_signing"),
+                patch("mac_entitlement_trial.sign_without_input"),
+                patch("mac_entitlement_trial.configure_app"),
+                patch("mac_entitlement_trial.run_owned_check", side_effect=run),
+                self.assertRaisesRegex(RuntimeError, "Diagnostic execution changed"),
+            ):
+                main()
+            result = json.loads((output / "result.json").read_text())
+            self.assertEqual(result["result"], "FAIL")
+            self.assertEqual(result["native_app_pcm"], "PASS")
+            self.assertFalse(result["unchanged_game_and_runtime"])
+
     def test_only_explicit_false_and_unchanged_production_bytes_are_accepted(self):
         for value, tamper in [
             (False, False),

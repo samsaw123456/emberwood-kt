@@ -44,7 +44,9 @@ class NativeAudioIdentityTests(unittest.TestCase):
         app = self.root / "Emberwood Kotlin.app"
         executable = app / "Contents/MacOS/Emberwood Kotlin"
         executable.parent.mkdir(parents=True)
-        shutil.copy2("/bin/sleep", executable)
+        # System file flags are not appropriate for this private fixture executable.
+        shutil.copyfile("/bin/sleep", executable)
+        executable.chmod(0o755)
         config = app / "Contents/app/Emberwood Kotlin.cfg"
         config.parent.mkdir()
         metadata = app / "Contents/Info.plist"

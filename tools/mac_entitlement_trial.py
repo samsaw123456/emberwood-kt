@@ -209,6 +209,10 @@ def main():
             )
             evidence["native_app_pcm"] = "PASS"
             evidence["unchanged_game_and_runtime"] = identity(app) == expected
+            if not evidence["unchanged_game_and_runtime"]:
+                raise RuntimeError(
+                    "Diagnostic execution changed production runtime or game bytes"
+                )
             evidence["result"] = "PASS"
         except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
             evidence.update(result="FAIL", error=str(error))
