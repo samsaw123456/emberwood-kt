@@ -10,6 +10,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from mac_profile_observer import NativeStatus
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -62,6 +64,10 @@ def main():
     core.CGEventSetFlags.restype = None
     core.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
     core.CGEventPost.restype = None
+    core.CGEventSourceFlagsState.argtypes = [ctypes.c_int]
+    core.CGEventSourceFlagsState.restype = ctypes.c_uint64
+    native = NativeStatus()
+    receipts = []
     keys = {
         name: foundation.CFStringCreateWithCString(None, name.encode(), 0x08000100)
         for name in ("kCGWindowOwnerPID", "kCGWindowLayer", "kCGWindowNumber")
@@ -105,6 +111,21 @@ def main():
         time.sleep(duration)
         key(code, False)
         time.sleep(0.4)
+
+    def require_foreground(pid, phase):
+        state = native.sample_and_wait(pid)
+        state["phase"] = phase
+        state["command_modifier_down"] = bool(
+            core.CGEventSourceFlagsState(0) & (1 << 20)
+        )
+        receipts.append(state)
+        (args.output / "native-state.json").write_text(
+            json.dumps(receipts, indent=2) + "\n"
+        )
+        if not state.get("active") or not state["is_frontmost"]:
+            raise RuntimeError(
+                f"Installed game is not the receiving foreground app at {phase}; inspect desktop and native-state evidence"
+            )
 
     process = None
     pid = None
@@ -154,6 +175,7 @@ def main():
                 ["screencapture", "-x", args.output / "desktop-with-dock.png"],
                 check=True,
             )
+            require_foreground(pid, "before-game-input")
             tap(36)  # Return: start from the actual title screen.
             tap(2, 0.35)  # D: move right.
             tap(49)  # Space: jump.
@@ -169,11 +191,27 @@ def main():
                 ],
                 check=True,
             )
+            require_foreground(pid, "before-Command-Q")
             key(55, True, 1 << 20)  # Physical Command + Q.
             key(12, True, 1 << 20)
             time.sleep(0.1)
             key(12, False, 1 << 20)
             key(55, False)
+            time.sleep(0.2)
+            command_released = not bool(core.CGEventSourceFlagsState(0) & (1 << 20))
+            receipts.append(
+                {
+                    "phase": "after-Command-Q",
+                    "command_modifier_released": command_released,
+                }
+            )
+            (args.output / "native-state.json").write_text(
+                json.dumps(receipts, indent=2) + "\n"
+            )
+            if not command_released:
+                raise RuntimeError(
+                    "Physical Command release was not reflected by macOS"
+                )
             process.wait(timeout=10)
             if window_for(pid) is not None:
                 raise RuntimeError("Command+Q did not close the installed app")

@@ -34,6 +34,10 @@ def main():
     parser.add_argument(
         "--jar", type=Path, default=ROOT / "build/libs/emberwood-kotlin.jar"
     )
+    parser.add_argument(
+        "--output-mixer",
+        help="Diagnostic: exact physical output mixer selected by native output-only discovery",
+    )
     args = parser.parse_args()
     if platform.system() != "Darwin":
         parser.error("Run this native output audit on macOS.")
@@ -53,6 +57,7 @@ def main():
         "game_jar_sha256": hashlib.sha256(jar.read_bytes()).hexdigest(),
         "java_executable": str(java),
         "game_jar": str(jar),
+        "diagnostic_output_mixer": args.output_mixer,
         "result": "UNVERIFIED",
         "reason": "Native capture helper has not completed",
     }
@@ -172,6 +177,11 @@ def main():
                 "-Xms32m",
                 "-Xmx256m",
                 "--enable-native-access=ALL-UNNAMED",
+                *(
+                    [f"-Djavax.sound.sampled.SourceDataLine=#{args.output_mixer}"]
+                    if args.output_mixer
+                    else []
+                ),
                 "-cp",
                 os.pathsep.join((str(jar), str(classes))),
                 "emberwood.AudioStateFixture",
