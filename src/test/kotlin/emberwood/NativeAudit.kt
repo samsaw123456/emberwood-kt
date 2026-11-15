@@ -38,6 +38,11 @@ private class NativeAudit(
     private val presentationStages = mutableListOf<String>()
     private val jumpObservations = mutableListOf<String>()
     private var presentationNonce = 65535
+    private val paintTraceEnabled = java.lang.Boolean.getBoolean("audit.paintTrace")
+    private val paintTrace = mutableListOf<String>()
+    private var paintTraceStarted: Long? = null
+    private var droppedPaintRecords = 0L
+    private var paintTraceStopped = false
 
     private data class Delivery(
         val count: Int,
@@ -104,7 +109,8 @@ private class NativeAudit(
                 val pair = openWindow(Settings(preferences))
                 frame = pair.first
                 panel = pair.second
-                panel.border = PresentationMarker.border { presentationNonce }
+                panel.border =
+                    PresentationMarker.border(afterPaint = if (paintTraceEnabled) ::recordPaint else null) { presentationNonce }
                 panel.addKeyListener(
                     object : KeyAdapter() {
                         override fun keyPressed(event: KeyEvent) = delivered(event, true)
@@ -207,8 +213,42 @@ private class NativeAudit(
                 output.resolve("presentation-latency.tsv"),
                 "Case\tFrame\tPresentation milliseconds\n" + presentationTimings.joinToString("\n") + "\n",
             )
+            if (paintTraceEnabled) {
+                val (records, dropped) =
+                    edt {
+                        paintTraceStopped = true
+                        paintTrace.toList() to droppedPaintRecords
+                    }
+                Files.writeString(output.resolve("java-paints.jsonl"), records.joinToString("\n", postfix = "\n"))
+                Files.writeString(
+                    output.resolve("java-paints-summary.json"),
+                    "{\"complete\":true,\"records\":${records.size},\"dropped_records\":$dropped," +
+                        "\"truncated\":${dropped > 0},\"maximum_records\":6000,\"maximum_seconds\":90," +
+                        "\"scope\":\"test border after game component and nonce; not native presentation proof\"}\n",
+                )
+            }
         }
         check(failures == 0) { "$failures native control cases failed; see ${output.resolve("controls.tsv")}" }
+    }
+
+    /** Optional, bounded observations only; file writes happen after input cleanup. */
+    private fun recordPaint(nonce: Int) {
+        if (paintTraceStopped) return
+        val before = System.nanoTime()
+        val started = paintTraceStarted ?: before.also { paintTraceStarted = it }
+        if (paintTrace.size >= 6000 || before - started >= 90_000_000_000L) {
+            droppedPaintRecords++
+            return
+        }
+        val epoch = System.currentTimeMillis()
+        val after = System.nanoTime()
+        val game = panel.game
+        paintTrace.add(
+            "{\"sequence\":${paintTrace.size},\"case\":${NativeAuditTools.quote(currentCase)},\"nonce\":$nonce," +
+                "\"nano_before\":$before,\"epoch_millis\":$epoch,\"nano_after\":$after," +
+                "\"state\":\"${game.state}\",\"game_elapsed\":${game.elapsed},\"player_x\":${game.player.x}," +
+                "\"painted_frames\":${panel.paintedFrames},\"paint_nanos\":${panel.paintNanos}}",
+        )
     }
 
     private fun case(

@@ -4,10 +4,12 @@ import argparse
 import ctypes
 import hashlib
 import json
+import math
 import os
 import platform
 import plistlib
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -27,6 +29,12 @@ TARGETED_CONTROLS_FILTER = r"^PLAYING/(A|D|Left|Right|←|→)$|/M$|/left-shift 
 TARGETED_CONTROLS_CASES = (
     26  # 4 direction + 6 mute + 4 dash + 11 focus/release + lifecycle.
 )
+CAPTURE_CONTROLS_FILTER = r"^PLAYING/(A|D|Left|Right|←|→)$|^TITLE/Return$"
+CAPTURE_CONTROLS_CASES = 6  # First four directions, title activation and lifecycle.
+FILTERED_CONTROLS = {
+    "controls-targeted": (TARGETED_CONTROLS_FILTER, TARGETED_CONTROLS_CASES),
+    "controls-capture": (CAPTURE_CONTROLS_FILTER, CAPTURE_CONTROLS_CASES),
+}
 
 
 def configure_app(
@@ -55,11 +63,14 @@ def configure_app(
                 f"-Dperformance.soakSeconds={seconds}",
             ]
         )
-    elif audit in {"controls", "controls-targeted"}:
+    elif audit == "controls" or audit in FILTERED_CONTROLS:
         main_class = "emberwood.NativeAuditKt"
         options.append(f"-Daudit.output={output}")
-        if audit == "controls-targeted":
-            options.append(f"-Daudit.filter={TARGETED_CONTROLS_FILTER}")
+        if audit in FILTERED_CONTROLS:
+            options.append(f"-Daudit.filter={FILTERED_CONTROLS[audit][0]}")
+        if audit == "controls-capture":
+            options.append("-Daudit.paintTrace=true")
+            options.append("-Xlog:gc,safepoint:stderr:time,uptime,level,tags")
     elif audit == "audio":
         main_class = "emberwood.AudioStateFixture"
         options.append("-Xlog:gc,safepoint:stderr:time,uptime,level,tags")
@@ -140,7 +151,7 @@ def validate_completion(result, audit, seconds):
     if not isinstance(result, dict) or result.get("result") != "PASS":
         raise RuntimeError("Native audit failed; inspect completion.json")
     required = {"result", "exception"}
-    if audit in {"controls", "controls-targeted"}:
+    if audit == "controls" or audit in FILTERED_CONTROLS:
         required.update(
             {"cases", "expected_cases", "failed_cases", "failure_count", "filtered"}
         )
@@ -152,10 +163,11 @@ def validate_completion(result, audit, seconds):
         raise RuntimeError("Unknown native audit completion mode")
     if not required.issubset(result):
         raise RuntimeError("Native audit completion is missing required evidence")
-    if audit in {"controls", "controls-targeted"}:
-        targeted = audit == "controls-targeted"
+    if audit == "controls" or audit in FILTERED_CONTROLS:
+        targeted = audit in FILTERED_CONTROLS
+        expected = FILTERED_CONTROLS[audit][1] if targeted else 280
         if (
-            result.get("cases") != (TARGETED_CONTROLS_CASES if targeted else 280)
+            result.get("cases") != expected
             or result.get("expected_cases") != 280
             or result.get("failed_cases") != []
             or result.get("failure_count") != 0
@@ -460,11 +472,148 @@ def validate_audio_trace(output):
     }
 
 
+def validate_capture_trace(output, pid):
+    """Require the bounded own-window recording after its helper has drained."""
+    trace = output / "capture-trace"
+    summary_path = trace / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    counts = (
+        "record_count",
+        "image_count",
+        "reserved_images",
+        "skipped_images",
+        "dropped_records",
+    )
+    if (
+        not isinstance(summary, dict)
+        or not {"error", "geometry_change", "mach_timebase"}.issubset(summary)
+        or type(pid) is not int
+        or pid <= 1
+        or summary.get("complete") is not True
+        or summary.get("error") is not None
+        or summary.get("pid") != pid
+        or type(summary.get("window")) is not int
+        or summary["window"] <= 0
+        or any(type(summary.get(name)) is not int for name in counts)
+        or not 0 < summary["record_count"] <= 6000
+        or not 0 < summary["image_count"] <= 128
+        or summary["image_count"] != summary["reserved_images"]
+        or summary["skipped_images"] != 0
+        or summary["dropped_records"] != 0
+        or summary.get("truncated") is not False
+        or summary.get("snapshot_comparator_unchanged") is not True
+        or summary.get("captures_audio") is not False
+        or summary.get("captures_microphone") is not False
+        or summary.get("scope") != "initial-fixed-window-geometry"
+    ):
+        raise RuntimeError(
+            "Native capture trace is incomplete, truncated, unscoped or failed"
+        )
+    timebase = summary["mach_timebase"]
+    if not isinstance(timebase, dict) or any(
+        type(timebase.get(name)) is not int or timebase[name] <= 0
+        for name in ("numerator", "denominator")
+    ):
+        raise RuntimeError("Native capture trace has no valid Mach clock scale")
+    requests = [
+        json.loads(line)
+        for line in (output / "external-capture.jsonl").read_text().splitlines()
+    ]
+    if not requests or any(
+        not isinstance(row, dict)
+        or row.get("pid") != pid
+        or not isinstance(row.get("window"), dict)
+        or row["window"].get("id") != summary["window"]
+        for row in requests
+    ):
+        raise RuntimeError(
+            "Native capture trace differs from the exact snapshot PID/window"
+        )
+    frames_path = trace / "frames.jsonl"
+    frames = [json.loads(line) for line in frames_path.read_text().splitlines()]
+    if len(frames) != summary["record_count"]:
+        raise RuntimeError(
+            "Native capture trace frame count does not match its journal"
+        )
+    images = []
+    for index, row in enumerate(frames):
+        if not isinstance(row, dict) or row.get("sequence") != index:
+            raise RuntimeError("Native capture trace frame sequence is incomplete")
+        if (
+            any(
+                type(row.get(name)) not in (float, int) or not math.isfinite(row[name])
+                for name in (
+                    "receipt_host_seconds",
+                    "receipt_host_after_seconds",
+                    "receipt_unix_seconds",
+                )
+            )
+            or row["receipt_host_seconds"] > row["receipt_host_after_seconds"]
+            or any(
+                type(row.get(name)) is not int or row[name] < 0
+                for name in ("receipt_mach_ticks", "receipt_mach_after_ticks")
+            )
+            or row["receipt_mach_ticks"] > row["receipt_mach_after_ticks"]
+        ):
+            raise RuntimeError("Native capture trace frame clock bracket is invalid")
+        if "image" not in row:
+            continue
+        name = row["image"]
+        if (
+            not isinstance(name, str)
+            or Path(name).name != name
+            or not name.startswith("stream-")
+            or not name.endswith(".png")
+            or row.get("valid") is not True
+            or row.get("status") != 0
+        ):
+            raise RuntimeError(
+                "Native capture trace image is not a complete scoped frame"
+            )
+        path = trace / name
+        if path.is_symlink():
+            raise RuntimeError("Native capture trace image cannot be a symbolic link")
+        data = path.read_bytes()
+        if (
+            len(data) < 45
+            or data[:8] != b"\x89PNG\r\n\x1a\n"
+            or data[12:16] != b"IHDR"
+            or data[-12:] != b"\x00\x00\x00\x00IEND\xaeB`\x82"
+            or struct.unpack(">II", data[16:24])
+            != (row.get("width"), row.get("height"))
+        ):
+            raise RuntimeError(
+                "Native capture trace PNG is missing or has different dimensions"
+            )
+        images.append({"path": name, "sha256": hashlib.sha256(data).hexdigest()})
+    names = {item["path"] for item in images}
+    if (
+        len(images) != summary["image_count"]
+        or len(names) != len(images)
+        or names != {path.name for path in trace.glob("*.png")}
+    ):
+        raise RuntimeError(
+            "Native capture trace images do not match the drained summary"
+        )
+    return {
+        "result": "PASS retained diagnostic trace",
+        "summary_sha256": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
+        "frames_sha256": hashlib.sha256(frames_path.read_bytes()).hexdigest(),
+        "pid": pid,
+        "window": summary["window"],
+        "record_count": len(frames),
+        "images": images,
+        "scope": summary["scope"],
+        "geometry_change": summary.get("geometry_change"),
+        "full_inventory_verified": False,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--audit",
-        choices=("performance", "controls", "controls-targeted", "audio"),
+        choices=("performance", "controls", *FILTERED_CONTROLS, "audio"),
         default="performance",
     )
     parser.add_argument("--output", type=Path)
@@ -479,9 +628,16 @@ def main():
         action="store_true",
         help="Enable test-only clock and output tracing for --audit audio",
     )
+    parser.add_argument(
+        "--capture-trace",
+        action="store_true",
+        help="Record a test-only own-window stream alongside --audit controls-capture",
+    )
     args = parser.parse_args()
     if args.audio_trace and args.audit != "audio":
         parser.error("--audio-trace requires --audit audio")
+    if args.capture_trace and args.audit != "controls-capture":
+        parser.error("--capture-trace requires --audit controls-capture")
     if platform.system() != "Darwin":
         parser.error("Run this diagnostic on macOS")
     if not 30 <= args.soak_seconds <= 1800:
@@ -494,6 +650,10 @@ def main():
         trace = output / "trace"
         if trace.exists() and (not trace.is_dir() or any(trace.iterdir())):
             parser.error("Use a fresh output directory for --audio-trace")
+    if args.capture_trace:
+        trace = output / "capture-trace"
+        if trace.exists() and (not trace.is_dir() or any(trace.iterdir())):
+            parser.error("Use a fresh output directory for --capture-trace")
     (output / "completion.json").unlink(missing_ok=True)
     version = (ROOT / "VERSION").read_text().strip()
     arch = {"arm64": "aarch64"}.get(platform.machine(), platform.machine())
@@ -510,6 +670,7 @@ def main():
         "audio": "AudioStateFixture.class",
         "controls": "NativeAuditKt.class",
         "controls-targeted": "NativeAuditKt.class",
+        "controls-capture": "NativeAuditKt.class",
     }[args.audit]
     if not original.is_dir() or not (tests / "emberwood" / entry).is_file():
         parser.error("Build the native package and requested audit test classes first")
@@ -530,12 +691,15 @@ def main():
         "jfr": "Not enabled: the unchanged shipped runtime has no jdk.jfr module",
         "result": "INCOMPLETE",
     }
-    if args.audit == "controls-targeted":
+    if args.audit in FILTERED_CONTROLS:
+        selected_filter, expected_cases = FILTERED_CONTROLS[args.audit]
         evidence.update(
-            controls_filter=TARGETED_CONTROLS_FILTER,
-            expected_filtered_cases=TARGETED_CONTROLS_CASES,
+            controls_filter=selected_filter,
+            expected_filtered_cases=expected_cases,
             full_inventory_verified=False,
         )
+    if args.capture_trace:
+        evidence["capture_trace_directory"] = str(output / "capture-trace")
     if args.audit == "audio":
         evidence["audio_trace_directory"] = (
             str(output / "trace") if args.audio_trace else None
@@ -550,7 +714,9 @@ def main():
             evidence["native_launcher"] = plistlib.load(stream)["CFBundleExecutable"]
         executable = app / "Contents/MacOS" / evidence["native_launcher"]
         controller = (
-            controllers.enter_context(Controller(output, executable))
+            controllers.enter_context(
+                Controller(output, executable, capture_trace=args.capture_trace)
+            )
             if args.audit != "audio"
             else None
         )
@@ -587,16 +753,13 @@ def main():
                     args.soak_seconds + 360
                     if args.audit == "performance"
                     else 600
-                    if args.audit == "controls-targeted"
+                    if args.audit in FILTERED_CONTROLS
                     else 2700,
                     controller,
                     args.audit,
                     args.soak_seconds,
                 )
             )
-            if controller:
-                controller.close()
-                evidence["external_controller_cleanup"] = "PASS"
             if (
                 tree_digest(app / "Contents/runtime") != runtime_digest
                 or hashlib.sha256(
@@ -617,7 +780,7 @@ def main():
                     json.dumps(evidence["audit_completion"], indent=2) + "\n"
                 )
             evidence["result"] = (
-                "PARTIAL_PASS" if args.audit == "controls-targeted" else "PASS"
+                "PARTIAL_PASS" if args.audit in FILTERED_CONTROLS else "PASS"
             )
         except (
             OSError,
@@ -630,12 +793,36 @@ def main():
             evidence["error"] = str(error)
             raise
         finally:
+            active_error = sys.exc_info()[0] is not None
+            cleanup_error = None
+            if controller:
+                try:
+                    # End the helper and drain its trace before accepting evidence.
+                    controllers.close()
+                    evidence["external_controller_cleanup"] = "PASS"
+                    if args.capture_trace:
+                        evidence["capture_trace_completion"] = validate_capture_trace(
+                            output, controller.pid
+                        )
+                except (
+                    OSError,
+                    RuntimeError,
+                    TypeError,
+                    ValueError,
+                    subprocess.SubprocessError,
+                ) as error:
+                    cleanup_error = error
+                    evidence["result"] = "FAIL"
+                    evidence["external_controller_cleanup_error"] = str(error)
+                    evidence.setdefault("error", str(error))
             if "original_app_tree_sha256_after" not in evidence:
                 evidence["original_app_tree_sha256_after"] = tree_digest(original)
             record.write_text(json.dumps(evidence, indent=2) + "\n")
-    if args.audit == "controls-targeted":
+            if cleanup_error is not None and not active_error:
+                raise cleanup_error
+    if args.audit in FILTERED_CONTROLS:
         print(
-            f"PARTIAL PASS: {TARGETED_CONTROLS_CASES} filtered rows; full inventory remains unverified"
+            f"PARTIAL PASS: {FILTERED_CONTROLS[args.audit][1]} filtered rows; full inventory remains unverified"
         )
     else:
         print(f"PASS: copied native app completed the {args.audit} audit")

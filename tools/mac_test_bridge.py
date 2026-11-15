@@ -33,6 +33,7 @@ class Controller:
         pointer_factory=NativePointer,
         auxiliary_guard=None,
         auxiliary_timeout=2.0,
+        capture_trace=False,
     ):
         self.output, self.executable = output.resolve(), executable.resolve()
         self.guard, self.windows, self.keys_factory = (
@@ -56,6 +57,7 @@ class Controller:
         self.closed = False
         self.capture_process = None
         self.capture_log = None
+        self.capture_trace = capture_trace
         self.capture_helper = self.output / "mac-window-capture"
         with (self.output / "capture-helper-compile.log").open("w") as log:
             subprocess.run(
@@ -70,6 +72,7 @@ class Controller:
                     "-target",
                     f"{platform.machine()}-apple-macosx15.0",
                     ROOT / "tools/mac_window_capture.swift",
+                    ROOT / "tools/mac_stream_diagnostic.swift",
                     "-o",
                     self.capture_helper,
                 ],
@@ -175,8 +178,11 @@ class Controller:
     def capture_image(self, pid, window, rectangle, path):
         if self.capture_process is None:
             self.capture_log = (self.output / "capture-helper.log").open("w")
+            command = [self.capture_helper, str(pid)]
+            if self.capture_trace:
+                command.extend(["--trace-dir", str(self.output / "capture-trace")])
             self.capture_process = subprocess.Popen(
-                [self.capture_helper, str(pid)],
+                command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=self.capture_log,
@@ -475,7 +481,7 @@ class Controller:
                     "Native capture helper closed its input unexpectedly"
                 )
             try:
-                self.capture_process.wait(timeout=5)
+                self.capture_process.wait(timeout=10 if self.capture_trace else 5)
             except subprocess.TimeoutExpired:
                 self.capture_process.kill()
                 self.capture_process.wait(timeout=5)

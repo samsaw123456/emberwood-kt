@@ -19,11 +19,12 @@ enum CaptureError: Error {
 
 @main
 struct WindowCapture {
-    static func capture(_ request: CaptureRequest, pid: Int32) async throws {
+    static func capture(_ request: CaptureRequest, pid: Int32, diagnostic: StreamDiagnostic?) async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         guard let window = content.windows.first(where: { $0.windowID == request.window && $0.owningApplication?.processID == pid }) else {
             throw CaptureError.unavailable("The requested window does not belong to the exact game PID")
         }
+        try await diagnostic?.observe(window: window, rectangle: request.rectangle)
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let configuration = SCStreamConfiguration()
         configuration.width = Int(window.frame.width.rounded())
@@ -65,24 +66,47 @@ struct WindowCapture {
 
     @MainActor
     static func main() async {
+        let arguments = CommandLine.arguments
+        // The fixture uses synthetic buffers only: it runs before NSApplication
+        // or any privacy preflight and never opens a native capture session.
+        if arguments.count == 3 && arguments[1] == "--test-stream-diagnostic" {
+            do {
+                try await StreamDiagnostic.selfTest(directory: URL(fileURLWithPath: arguments[2]))
+                print("PASS stream pixel/metadata/ownership/bounds fixture; no capture or permission request")
+                return
+            } catch {
+                fputs("Stream fixture failed: \(error)\n", stderr)
+                exit(1)
+            }
+        }
         // NSApplication establishes the WindowServer connection required by CG/SCK.
         // This external test helper never activates or creates a window of its own.
         _ = NSApplication.shared.setActivationPolicy(.prohibited)
-        guard CommandLine.arguments.count == 2, let pid = Int32(CommandLine.arguments[1]), pid > 1,
+        guard (arguments.count == 2 || (arguments.count == 4 && arguments[2] == "--trace-dir")),
+              let pid = Int32(arguments[1]), pid > 1,
               CGPreflightScreenCaptureAccess() else {
             fputs("Capture requires the exact game PID and pre-existing permission; no consent requested\n", stderr)
             exit(77)
+        }
+        let diagnostic: StreamDiagnostic?
+        do {
+            diagnostic = arguments.count == 4 ? try StreamDiagnostic(directory: URL(fileURLWithPath: arguments[3]), pid: pid) : nil
+        } catch {
+            fputs("Stream setup failed: \(error)\n", stderr)
+            exit(1)
         }
         print("READY"); fflush(stdout)
         while let line = readLine() {
             do {
                 let request = try JSONDecoder().decode(CaptureRequest.self, from: Data(line.utf8))
-                try await capture(request, pid: pid)
+                try await capture(request, pid: pid, diagnostic: diagnostic)
                 print("OK")
             } catch {
                 print("ERROR \(error)".replacingOccurrences(of: "\n", with: " "))
             }
             fflush(stdout)
         }
+        do { try await diagnostic?.finish() }
+        catch { fputs("Stream cleanup failed: \(error)\n", stderr); exit(1) }
     }
 }

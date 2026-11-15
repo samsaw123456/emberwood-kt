@@ -14,25 +14,29 @@ internal object PresentationMarker {
     private const val CELLS = 20
 
     /** Paint after the actual game's component on every repaint, without changing its layout. */
-    fun border(nonce: () -> Int) =
-        object : AbstractBorder() {
-            override fun paintBorder(
-                component: Component?,
-                graphics: Graphics,
-                x: Int,
-                y: Int,
-                width: Int,
-                height: Int,
-            ) {
-                val overlay = graphics.create()
-                try {
-                    overlay.translate(x, y)
-                    paint(overlay, nonce())
-                } finally {
-                    overlay.dispose()
-                }
+    fun border(
+        afterPaint: ((Int) -> Unit)? = null,
+        nonce: () -> Int,
+    ) = object : AbstractBorder() {
+        override fun paintBorder(
+            component: Component?,
+            graphics: Graphics,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+        ) {
+            val overlay = graphics.create()
+            try {
+                overlay.translate(x, y)
+                val paintedNonce = nonce()
+                paint(overlay, paintedNonce)
+                afterPaint?.invoke(paintedNonce)
+            } finally {
+                overlay.dispose()
             }
         }
+    }
 
     fun paint(
         graphics: Graphics,

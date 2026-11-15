@@ -20,6 +20,8 @@ class PresentationMarkerTest {
             var nonce = 7
             var paintColor = Color.RED
             var componentPaints = 0
+            val image = BufferedImage(64, 48, BufferedImage.TYPE_INT_RGB)
+            val paintReceipts = mutableListOf<Pair<Int, Int>>()
             val panel =
                 object : JPanel() {
                     override fun paintComponent(graphics: Graphics) {
@@ -29,9 +31,13 @@ class PresentationMarkerTest {
                     }
                 }
             panel.setSize(64, 48)
-            panel.border = PresentationMarker.border { nonce }
+            panel.border =
+                PresentationMarker.border(afterPaint = { paintedNonce ->
+                    assertTrue(PresentationMarker.matches(image, paintedNonce))
+                    assertEquals(paintColor.rgb, image.getRGB(40, 30))
+                    paintReceipts.add(paintedNonce to componentPaints)
+                }) { nonce }
             assertEquals(Insets(0, 0, 0, 0), panel.insets)
-            val image = BufferedImage(64, 48, BufferedImage.TYPE_INT_RGB)
             val graphics = image.createGraphics()
             try {
                 panel.paint(graphics)
@@ -45,6 +51,7 @@ class PresentationMarkerTest {
                 assertFalse(PresentationMarker.matches(image, 7))
                 assertEquals(Color.BLUE.rgb, image.getRGB(40, 30))
                 assertEquals(Insets(0, 0, 0, 0), panel.insets)
+                assertEquals(listOf(7 to 1, 8 to 2), paintReceipts)
             } finally {
                 graphics.dispose()
             }

@@ -212,6 +212,66 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(self.captures), 1)
         self.assertFalse((self.output / "bad.png").exists())
 
+    def exercise_capture_process(self, trace):
+        helper = self.output / "capture-fixture"
+        helper.write_text(
+            f"#!{sys.executable}\n"
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "root = Path(__file__).resolve().parent\n"
+            "requests = []\n"
+            "(root / 'helper-arguments.json').write_text(json.dumps(sys.argv[1:]))\n"
+            "print('READY', flush=True)\n"
+            "for line in sys.stdin:\n"
+            "    request = json.loads(line)\n"
+            "    requests.append(request)\n"
+            "    Path(request['path']).write_bytes(b'fixture pixels, not Mac evidence')\n"
+            "    print('OK', flush=True)\n"
+            "(root / 'helper-finished.json').write_text(json.dumps(requests))\n"
+        )
+        helper.chmod(0o755)
+        self.controller.capture_helper = helper
+        self.controller.capture_trace = trace
+        self.controller.capture_image = Controller.capture_image.__get__(
+            self.controller, Controller
+        )
+        self.guard()
+        with self.client("capture-serve") as stream:
+            self.assertEqual(stream.readline(), b"READY\n")
+            for name in ("one.png", "two.png"):
+                target = self.output / name
+                stream.write(
+                    json.dumps([10, 20, 100, 100, str(target)]).encode() + b"\n"
+                )
+                self.assertEqual(stream.readline(), b"OK\n")
+                self.assertEqual(
+                    target.read_bytes(), b"fixture pixels, not Mac evidence"
+                )
+        self.controller.close()
+        arguments = json.loads((self.output / "helper-arguments.json").read_text())
+        expected = ["42"]
+        if trace:
+            expected += [
+                "--trace-dir",
+                str((self.output / "capture-trace").resolve()),
+            ]
+        self.assertEqual(arguments, expected)
+        finished = json.loads((self.output / "helper-finished.json").read_text())
+        self.assertEqual(len(finished), 3)
+        self.assertTrue(all(row["window"] == 7 for row in finished))
+        self.assertIsNone(finished[0]["rectangle"])
+        self.assertTrue(
+            all(row["rectangle"] == [10, 20, 100, 100] for row in finished[1:])
+        )
+        self.assertEqual(self.controller.capture_process.returncode, 0)
+        self.assertEqual(self.keys, [])
+
+    def test_default_capture_process_keeps_snapshot_protocol_and_eof_cleanup(self):
+        self.exercise_capture_process(False)
+
+    def test_capture_trace_is_opt_in_and_preserves_same_window_snapshots(self):
+        self.exercise_capture_process(True)
+
     def test_concurrent_clients_and_duplicate_keyboard_refusal(self):
         self.guard()
         with self.client("keys") as keys, self.client("capture-serve") as captures:

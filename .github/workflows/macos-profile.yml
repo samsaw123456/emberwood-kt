@@ -24,7 +24,7 @@ on:
         type: choice
         required: true
         default: performance
-        options: [performance, controls, controls-targeted, compare-launchers, audio, audio-trace]
+        options: [performance, controls, controls-targeted, controls-capture, compare-launchers, audio, audio-trace]
 permissions:
   contents: read
 jobs:
@@ -49,6 +49,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tools -p 'test_mac_bridge.py' -v
           python3 -m unittest discover -s tools -p 'test_mac_app*.py' -v
+          python3 -m unittest tools.test_mac_stream_diagnostic -v
           ./gradlew --no-daemon check fatJar
           python3 tools/package_app.py --skip-build
       - name: Audit an isolated app through LaunchServices
@@ -62,6 +63,8 @@ jobs:
               python3 tools/mac_app_profile.py --audit "$AUDIT_KIND" --soak-seconds "$SOAK_SECONDS" ;;
             audio-trace)
               python3 tools/mac_app_profile.py --audit audio --audio-trace ;;
+            controls-capture)
+              python3 tools/mac_app_profile.py --audit controls-capture --capture-trace ;;
             compare-launchers)
               python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds "$SOAK_SECONDS" ;;
             *) exit 2 ;;
@@ -75,6 +78,7 @@ jobs:
             build/performance-native-app/
             build/controls-native-app/
             build/controls-targeted-native-app/
+            build/controls-capture-native-app/
             build/performance-launcher-comparison/
             build/audio-native-app/
             build/reports/tests/

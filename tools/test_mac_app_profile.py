@@ -1,12 +1,18 @@
 """Verify isolated native-launcher configuration and authoritative result handling."""
 
 import copy
+import re
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 
-from mac_app_profile import configure_app, tree_digest, validate_completion
+from mac_app_profile import (
+    CAPTURE_CONTROLS_FILTER,
+    configure_app,
+    tree_digest,
+    validate_completion,
+)
 
 
 class NativeAppConfigTests(unittest.TestCase):
@@ -15,6 +21,7 @@ class NativeAppConfigTests(unittest.TestCase):
             ("performance", "emberwood.PerformanceAudit"),
             ("controls", "emberwood.NativeAuditKt"),
             ("controls-targeted", "emberwood.NativeAuditKt"),
+            ("controls-capture", "emberwood.NativeAuditKt"),
             ("audio", "emberwood.AudioStateFixture"),
         ]:
             with (
@@ -43,6 +50,10 @@ class NativeAppConfigTests(unittest.TestCase):
                 )
                 configured = config.read_text()
                 self.assertNotIn("audio.trace.directory", configured)
+                self.assertEqual(
+                    "java-options=-Daudit.paintTrace=true\n" in configured,
+                    mode == "controls-capture",
+                )
                 self.assertIn(f"app.mainclass={main}\n", configured)
                 self.assertIn("app.classpath=$APPDIR/native-audit.jar\n", configured)
                 self.assertIn(
@@ -61,12 +72,13 @@ class NativeAppConfigTests(unittest.TestCase):
                     self.assertEqual(
                         "-Xlog:gc,safepoint:stderr:time,uptime,level,tags"
                         in configured,
-                        mode == "audio",
+                        mode in {"audio", "controls-capture"},
                     )
-                    if mode in {"controls", "controls-targeted"}:
+                    if mode.startswith("controls"):
                         self.assertIn("-Daudit.output=", configured)
                     self.assertEqual(
-                        "-Daudit.filter=" in configured, mode == "controls-targeted"
+                        "-Daudit.filter=" in configured,
+                        mode in {"controls-targeted", "controls-capture"},
                     )
                     self.assertNotIn("performance.", configured)
                 self.assertEqual(tree_digest(app / "Contents/runtime"), before)
@@ -151,6 +163,47 @@ class NativeAppConfigTests(unittest.TestCase):
         ]:
             with self.subTest(changes=changes), self.assertRaises(RuntimeError):
                 validate_completion({**partial, **changes}, "controls-targeted", 30)
+
+    def test_capture_mode_preserves_first_direction_order_and_is_partial(self):
+        inventory = [
+            "PLAYING/A",
+            "PLAYING/←",
+            "PLAYING/D",
+            "PLAYING/→",
+            "PLAYING/A with scrolling camera",
+            "TITLE/Tab",
+            "TITLE/Return",
+            "PAUSED/Return",
+            "TITLE/Return unavailable",
+            "PLAYING/A unavailable",
+        ]
+        self.assertEqual(
+            [row for row in inventory if re.search(CAPTURE_CONTROLS_FILTER, row)],
+            ["PLAYING/A", "PLAYING/←", "PLAYING/D", "PLAYING/→", "TITLE/Return"],
+        )
+        partial = {
+            "result": "PASS",
+            "cases": 6,
+            "expected_cases": 280,
+            "failed_cases": [],
+            "failure_count": 0,
+            "filtered": True,
+            "exception": None,
+        }
+        validate_completion(partial, "controls-capture", 30)
+        for mode in ("controls", "controls-targeted"):
+            with self.subTest(mode=mode), self.assertRaises(RuntimeError):
+                validate_completion(partial, mode, 30)
+        for changes in (
+            {"cases": 5},
+            {"cases": 280},
+            {"filtered": False},
+            {"failure_count": 1},
+            {"failed_cases": ["left"]},
+            {"exception": "missing trace"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(RuntimeError):
+                validate_completion({**partial, **changes}, "controls-capture", 30)
 
 
 if __name__ == "__main__":
