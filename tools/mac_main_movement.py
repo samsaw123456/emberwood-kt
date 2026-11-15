@@ -1,7 +1,7 @@
 """Observe bounded movement in the unchanged native MainKt app, without fixtures.
 
-This diagnostic is deliberately limited to the Intel runner's observed standard
-1152x676 window. It neither paints nor reads the Java model. A separate process
+This diagnostic is limited to the two measured native runner window geometries.
+It neither paints nor reads the Java model. A separate process
 posts each key-up on a fixed deadline; screen capture cannot extend a key hold.
 """
 
@@ -37,8 +37,13 @@ from package_integrity import tree_digest
 from physical_key import CODES, NativeKeys
 
 ROOT = Path(__file__).resolve().parents[1]
-WINDOW_SIZE = (1152, 676)
-CLIENT = (0, 28, 1152, 676)
+# These are measured native window/client geometries, not arbitrary resizing.
+# The 1024-wide runner retains a 648-high client with 36px letterboxing above and
+# below the 576-high playfield. Original captures are never resampled.
+GAME_CROPS = {
+    (1152, 676): (0, 28, 1152, 676),
+    (1024, 676): (0, 64, 1024, 640),
+}
 ALLOWED_KEYS = {"return", "d", "a", "left"}
 
 
@@ -57,17 +62,23 @@ def main_launch_command(app, data, output):
     return command
 
 
-def owned_window(windows, pid, executable, window_id=None):
+def game_crop(size, expected_size=None):
+    size = tuple(size)
+    if size not in GAME_CROPS or (
+        expected_size is not None and size != tuple(expected_size)
+    ):
+        raise RuntimeError("Native capture changed size or has an unmeasured geometry")
+    return GAME_CROPS[size]
+
+
+def owned_window(windows, pid, executable, window_id=None, window_size=None):
     if windows.executable(pid) != executable:
         raise RuntimeError("Input PID does not have the exact game executable")
     windows.facilities()
     window = windows.find(pid, title="Emberwood Kotlin")
     if window_id is not None and window["id"] != window_id:
         raise RuntimeError("The exact game window changed")
-    if tuple(window["bounds"][2:]) != WINDOW_SIZE:
-        raise RuntimeError(
-            "This diagnostic requires the observed 1152x676 Intel window"
-        )
+    game_crop(window["bounds"][2:], window_size)
     require_game_window(pid)
     return window
 
@@ -114,7 +125,15 @@ def await_owned_window(
     raise RuntimeError("The exact game window did not become ready within the deadline")
 
 
-def await_title(output, capture, *, timeout=10, clock=time.monotonic, sleep=time.sleep):
+def await_title(
+    output,
+    capture,
+    *,
+    window_size=None,
+    timeout=10,
+    clock=time.monotonic,
+    sleep=time.sleep,
+):
     """Wait for actual title pixels before allowing the first physical Return."""
     from PIL import Image
 
@@ -124,9 +143,7 @@ def await_title(output, capture, *, timeout=10, clock=time.monotonic, sleep=time
         while clock() < deadline:
             path = capture("startup-title-latest")
             with Image.open(path) as frame:
-                if frame.size != WINDOW_SIZE:
-                    raise RuntimeError("Startup title capture changed size")
-                visible = title_visible(frame.crop(CLIENT))
+                visible = title_visible(frame.crop(game_crop(frame.size, window_size)))
             row = {
                 "monotonic": clock(),
                 "epoch_ns": time.time_ns(),
@@ -199,7 +216,11 @@ def input_worker(raw):
     signal.signal(signal.SIGTERM, interrupted)
     try:
         owned_window(
-            GameWindow(), spec["pid"], Path(spec["executable"]), spec["window"]
+            GameWindow(),
+            spec["pid"],
+            Path(spec["executable"]),
+            spec["window"],
+            spec.get("window_size"),
         )
         native = NativeKeys()
         print("READY", flush=True)
@@ -219,13 +240,24 @@ def input_worker(raw):
 
 
 def run_hold(
-    output, pid, executable, window, key, seconds, label, during=None, before_go=None
+    output,
+    pid,
+    executable,
+    window,
+    key,
+    seconds,
+    label,
+    during=None,
+    before_go=None,
+    *,
+    window_size=None,
 ):
     destination = output / f"input-{label}.json"
     spec = {
         "pid": pid,
         "executable": str(executable),
         "window": window,
+        "window_size": window_size,
         "key": key,
         "seconds": seconds,
         "output": str(destination),
@@ -381,22 +413,20 @@ class LiveSample:
             write_json(self.output / "live-sample.json", self.record)
 
 
-def observed_fox(path):
+def observed_fox(path, window_size=None):
     from PIL import Image
 
     with Image.open(path) as original:
-        if original.size != WINDOW_SIZE:
-            raise RuntimeError(
-                "Native capture changed size; no inferred rescaling is allowed"
-            )
-        client = original.convert("RGB").crop(CLIENT)
+        client = original.convert("RGB").crop(game_crop(original.size, window_size))
+        scale = client.width / 1152
         # Grounded movement only. Exclude the chrome, HUD, footer and title fox.
-        point = fox_center(client.crop((0, 170, 1152, 570)))
+        top = round(170 * scale)
+        point = fox_center(client.crop((0, top, client.width, round(570 * scale))))
     if point is None:
         raise RuntimeError(
             "No opaque original-palette fox in the gameplay ground region"
         )
-    return [point[0], point[1] + 170]
+    return [point[0] / scale, (point[1] + top) / scale]
 
 
 def validate_motion(before, released, rested):
@@ -416,11 +446,11 @@ def validate_motion(before, released, rested):
         )
 
 
-def observe_recovery(mode, key, capture, *, sleep=time.sleep):
+def observe_recovery(mode, key, capture, *, window_size=None, sleep=time.sleep):
     released = None
     if mode == "snapshot":
         sleep(0.3)
-        released = observed_fox(capture(f"{key}-released"))
+        released = observed_fox(capture(f"{key}-released"), window_size)
         sleep(0.3 if key == "a" else 3.5)
     elif mode == "stream-only":
         # Keep AX/snapshot queries out of the complete held and early-recovery
@@ -428,10 +458,10 @@ def observe_recovery(mode, key, capture, *, sleep=time.sleep):
         sleep(0.6 if key == "a" else 3.5)
     else:
         raise ValueError("Unknown held-capture mode")
-    return released, observed_fox(capture(f"{key}-rested"))
+    return released, observed_fox(capture(f"{key}-rested"), window_size)
 
 
-def inspect_held_stream(output, movements):
+def inspect_held_stream(output, movements, window_size=None):
     records = [
         json.loads(line)
         for line in (output / "capture-trace/frames.jsonl").read_text().splitlines()
@@ -465,7 +495,7 @@ def inspect_held_stream(output, movements):
         ]
         observed = []
         for row in eligible:
-            point = observed_fox(output / "capture-trace" / row["image"])
+            point = observed_fox(output / "capture-trace" / row["image"], window_size)
             observed.append(
                 {
                     "frame": row["image"],
@@ -495,7 +525,7 @@ def inspect_held_stream(output, movements):
     return proof
 
 
-def inspect_released_stream(output, movements):
+def inspect_released_stream(output, movements, window_size=None):
     """Require presented recovery pixels while the controller avoids AX polling."""
     records = [
         json.loads(line)
@@ -509,7 +539,9 @@ def inspect_released_stream(output, movements):
             {
                 "frame": row["image"],
                 "pts": row["presentation_seconds"],
-                "fox": observed_fox(output / "capture-trace" / row["image"]),
+                "fox": observed_fox(
+                    output / "capture-trace" / row["image"], window_size
+                ),
             }
             for row in records
             if row.get("image")
@@ -590,8 +622,9 @@ def main():
         "production_sha256": hashlib.sha256(
             (app / "Contents/app/emberwood-kotlin.jar").read_bytes()
         ).hexdigest(),
-        "client_crop": CLIENT,
-        "window_size": WINDOW_SIZE,
+        "window_size": None,
+        "game_crop": None,
+        "coordinate_units": "1152x648 logical game pixels; original images retained without resampling",
         "movements": [],
         "held_capture": args.held_capture,
         "live_sample_requested": args.live_sample,
@@ -627,9 +660,11 @@ def main():
                 report["live_sample"] = sampler.record
             window = await_owned_window(windows, pid, executable, launcher, output)
             report["window"] = window
+            window_size = tuple(window["bounds"][2:])
+            report.update(window_size=window_size, game_crop=game_crop(window_size))
 
             def ordinary_capture(label):
-                owned_window(windows, pid, executable, window["id"])
+                owned_window(windows, pid, executable, window["id"], window_size)
                 path = output / f"{label}.png"
                 subprocess.run(
                     ["screencapture", "-x", "-o", "-l", str(window["id"]), str(path)],
@@ -638,15 +673,33 @@ def main():
                 )
                 return path
 
-            await_title(output, ordinary_capture)
-            run_hold(output, pid, executable, window["id"], "return", 0.08, "start")
+            await_title(output, ordinary_capture, window_size=window_size)
+            run_hold(
+                output,
+                pid,
+                executable,
+                window["id"],
+                "return",
+                0.08,
+                "start",
+                window_size=window_size,
+            )
             time.sleep(1.0)  # Initial invulnerability opacity ends without input.
-            start = observed_fox(ordinary_capture("entry"))
+            start = observed_fox(ordinary_capture("entry"), window_size)
             if not 120 < start[0] < 160 or not 490 < start[1] < 536:
                 raise RuntimeError("Original entry ground/camp position is not visible")
-            run_hold(output, pid, executable, window["id"], "d", 0.65, "prepare")
+            run_hold(
+                output,
+                pid,
+                executable,
+                window["id"],
+                "d",
+                0.65,
+                "prepare",
+                window_size=window_size,
+            )
             time.sleep(0.3)
-            before = observed_fox(ordinary_capture("prepared"))
+            before = observed_fox(ordinary_capture("prepared"), window_size)
             if not 270 < before[0] < 350 or abs(before[1] - start[1]) > 6:
                 raise RuntimeError("D did not reach the original safe clearing")
 
@@ -655,7 +708,7 @@ def main():
             def capture(label):
                 if time.monotonic() - trace_started > 10:
                     raise RuntimeError("Bounded active stream exceeded ten seconds")
-                owned_window(windows, pid, executable, window["id"])
+                owned_window(windows, pid, executable, window["id"], window_size)
                 path = output / f"{label}.png"
                 controller.capture(pid, None, path)
                 if time.monotonic() - trace_started > 10:
@@ -664,7 +717,7 @@ def main():
                     )
                 return path
 
-            before = observed_fox(capture("a-before"))
+            before = observed_fox(capture("a-before"), window_size)
             for key in ("a", "left"):
                 if time.monotonic() - trace_started > (4.5 if key == "left" else 1.5):
                     raise RuntimeError(
@@ -680,8 +733,11 @@ def main():
                     key,
                     held_capture_callback(args.held_capture, capture, key),
                     sampler.start if key == "left" and sampler is not None else None,
+                    window_size=window_size,
                 )
-                released, rested = observe_recovery(args.held_capture, key, capture)
+                released, rested = observe_recovery(
+                    args.held_capture, key, capture, window_size=window_size
+                )
                 if released is not None:
                     validate_motion(before, released, rested)
                 report["movements"].append(
@@ -702,10 +758,12 @@ def main():
                 or summary.get("geometry_change") is not None
             ):
                 raise RuntimeError("The fixed-window100ms stream scope changed")
-            report["held_stream"] = inspect_held_stream(output, report["movements"])
+            report["held_stream"] = inspect_held_stream(
+                output, report["movements"], window_size
+            )
             if args.held_capture == "stream-only":
                 report["released_stream"] = inspect_released_stream(
-                    output, report["movements"]
+                    output, report["movements"], window_size
                 )
             if sampler is not None:
                 sampler.finish()
@@ -713,7 +771,7 @@ def main():
                 report["application_menu"] = inspect_application_menu(
                     output / "application-menu", pid, executable, windows, window["id"]
                 )
-            owned_window(windows, pid, executable, window["id"])
+            owned_window(windows, pid, executable, window["id"], window_size)
             keyboard = NativeKeys()
             poster = ImmediateMacKeys(keyboard.core, keyboard.core)
             try:

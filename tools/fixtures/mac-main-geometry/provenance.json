@@ -1,0 +1,54 @@
+{
+  "scope": "Image-reader regression only: native control fixture images are not ordinary Main movement proof",
+  "production_sha256": "ae9686cb8387d5c9f61f4a6cb73d4f9a99803fe6e93e2ce519d495d59b9bdb8c",
+  "measured_window_size": [
+    1024,
+    676
+  ],
+  "client_crop": [
+    0,
+    28,
+    1024,
+    676
+  ],
+  "game_crop": [
+    0,
+    64,
+    1024,
+    640
+  ],
+  "frames": [
+    {
+      "path": "arm-title.png",
+      "source": "build/ci-main-detachment-ae9686cb-macos-arm/build/main-movement-native-app/failure-desktop.png",
+      "source_sha256": "7e6d9b5c09a5136d4388932252686d720a1dec0b208863c7edaff3ea776eb34b",
+      "operation": "Exact outer-window crop [0,29,1024,705], no resampling",
+      "run_id": 43747449721,
+      "sha256": "8028115f38f95d1e820e61f8ac2fb0a937739b17cf8ed631b61c8060324abd40"
+    },
+    {
+      "path": "arm-before.png",
+      "source": "build/ci-controls-detachment-ae9686cb-macos-arm/build/controls-capture-native-app/capture-trace/stream-0007.png",
+      "source_sha256": "ec58e6f4e7af0ea175bf0ed6d8cb0529c83117308d10e72bca638958d189da73",
+      "operation": "Unchanged original own-window SCStream image",
+      "run_id": 43747451930,
+      "sha256": "ec58e6f4e7af0ea175bf0ed6d8cb0529c83117308d10e72bca638958d189da73"
+    },
+    {
+      "path": "arm-released.png",
+      "source": "build/ci-controls-detachment-ae9686cb-macos-arm/build/controls-capture-native-app/capture-trace/stream-0010.png",
+      "source_sha256": "57c4bd935c99508078fb502d351e34edbd6a78a6a74a26e274802354569632e6",
+      "operation": "Unchanged original own-window SCStream image",
+      "run_id": 43747451930,
+      "sha256": "57c4bd935c99508078fb502d351e34edbd6a78a6a74a26e274802354569632e6"
+    },
+    {
+      "path": "arm-rested.png",
+      "source": "build/ci-controls-detachment-ae9686cb-macos-arm/build/controls-capture-native-app/capture-trace/stream-0011.png",
+      "source_sha256": "12e0a23a5fa7edec173cb012dd605a131fac185810dd5bacece58040b02cb97b",
+      "operation": "Unchanged original own-window SCStream image",
+      "run_id": 43747451930,
+      "sha256": "12e0a23a5fa7edec173cb012dd605a131fac185810dd5bacece58040b02cb97b"
+    }
+  ]
+}

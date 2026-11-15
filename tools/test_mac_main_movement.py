@@ -1,5 +1,6 @@
 """Verify bounded input scheduling and external evidence rejection without macOS."""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from mac_main_movement import (
     LiveSample,
     await_owned_window,
     await_title,
+    game_crop,
     held_capture_callback,
     inspect_held_stream,
     inspect_released_stream,
@@ -59,6 +61,52 @@ class Keyboard:
 
 
 class MainMovementTests(unittest.TestCase):
+    def test_measured_arm_images_keep_logical_motion_and_title_without_resampling(self):
+        from linux_game_smoke import title_visible
+        from PIL import Image
+
+        fixtures = Path(__file__).parent / "fixtures/mac-main-geometry"
+        provenance = json.loads((fixtures / "provenance.json").read_text())
+        for row in provenance["frames"]:
+            self.assertEqual(
+                hashlib.sha256((fixtures / row["path"]).read_bytes()).hexdigest(),
+                row["sha256"],
+            )
+        with Image.open(fixtures / "arm-title.png") as original:
+            self.assertEqual(original.size, (1024, 676))
+            self.assertEqual(game_crop(original.size), (0, 64, 1024, 640))
+            self.assertTrue(title_visible(original.crop(game_crop(original.size))))
+        before, released, rested = (
+            observed_fox(fixtures / f"arm-{name}.png", (1024, 676))
+            for name in ("before", "released", "rested")
+        )
+        self.assertEqual(before, [299.8125, 510.75])
+        self.assertEqual(released, [217.6875, 511.875])
+        self.assertEqual(rested, [218.25, 511.875])
+        validate_motion(before, released, rested)
+        for size in ((1000, 676), (1024, 648), (1024, 677)):
+            with (
+                self.subTest(size=size),
+                self.assertRaisesRegex(RuntimeError, "geometry"),
+            ):
+                game_crop(size)
+        with self.assertRaisesRegex(RuntimeError, "changed size"):
+            observed_fox(fixtures / "arm-rested.png", (1152, 676))
+
+    def test_known_geometry_cannot_change_after_readiness_or_before_input(self):
+        windows = SimpleNamespace(
+            executable=lambda _: Path("/owned"),
+            facilities=lambda: None,
+            find=lambda *_, **__: {"id": 7, "bounds": [0, 29, 1024, 676]},
+        )
+        with patch("mac_main_movement.require_game_window") as focus:
+            owned_window(windows, 42, Path("/owned"), 7, (1024, 676))
+            focus.assert_called_once_with(42)
+            focus.reset_mock()
+            with self.assertRaisesRegex(RuntimeError, "changed size"):
+                owned_window(windows, 42, Path("/owned"), 7, (1152, 676))
+            focus.assert_not_called()
+
     def test_launch_retains_scoped_stdio_without_changing_app_arguments(self):
         app = Path("/private/native app/Emberwood Kotlin.app")
         data, output = Path("/private/save data"), Path("/private/owned evidence")
@@ -612,7 +660,7 @@ class MainMovementTests(unittest.TestCase):
         for executable, window in (
             (Path("/other"), {"id": 7, "bounds": [0, 0, 1152, 676]}),
             (Path("/owned"), {"id": 8, "bounds": [0, 0, 1152, 676]}),
-            (Path("/owned"), {"id": 7, "bounds": [0, 0, 1024, 676]}),
+            (Path("/owned"), {"id": 7, "bounds": [0, 0, 1000, 676]}),
         ):
             windows = SimpleNamespace(
                 executable=lambda _, executable=executable: executable,
@@ -656,7 +704,7 @@ class MainMovementTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(RuntimeError, "opaque"):
                         observed_fox(path)
-            Image.new("RGB", (1024, 676)).save(path)
+            Image.new("RGB", (1000, 676)).save(path)
             with self.assertRaisesRegex(RuntimeError, "changed size"):
                 observed_fox(path)
 
