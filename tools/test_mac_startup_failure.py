@@ -14,6 +14,7 @@ from mac_startup_failure import (
     ERROR_TITLE,
     ExitStatus,
     acknowledge_error,
+    await_error,
     deny_native_access,
     main,
     validate_denial,
@@ -94,6 +95,35 @@ def app_fixture(path):
 
 
 class StartupFailureTests(unittest.TestCase):
+    def test_rejected_native_dialog_fields_are_retained_before_any_input(self):
+        state = dialog()
+        state["texts"] = []
+        executable = Path("/owned")
+        windows = SimpleNamespace(
+            executable=lambda _: executable,
+            facilities=lambda: {"access": True},
+            find=lambda *_args, **_kwargs: {"id": 7, "title": ERROR_TITLE},
+        )
+        reader = SimpleNamespace(snapshot=lambda: state)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("mac_startup_failure.NativeKeys") as keys,
+        ):
+            output = Path(directory)
+            with self.assertRaisesRegex(RuntimeError, "exact owned"):
+                await_error(
+                    windows, reader, 42, executable, Mock(poll=lambda: None), output
+                )
+            rows = json.loads((output / "error-observations.json").read_text())
+            self.assertEqual(rows[-1]["dialog"], state)
+            self.assertEqual(rows[-1]["result"], "FAIL before acknowledgement")
+            receipt = {}
+            with self.assertRaisesRegex(RuntimeError, "exact owned"):
+                acknowledge_error(windows, reader, 42, executable, 7, Mock(), receipt)
+            self.assertEqual(receipt["dialog_before_Return"], state)
+            self.assertIsNone(receipt["down_started"])
+            keys.assert_not_called()
+
     def test_denial_changes_only_one_launcher_option_and_preserves_original(self):
         with tempfile.TemporaryDirectory(prefix="failure fixture spaces ") as directory:
             original, copied = (

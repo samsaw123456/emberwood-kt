@@ -176,7 +176,6 @@ class ErrorDialogReader(MenuReader):
                     "nodes": 0,
                 }
                 self.read_nodes(window, state, 0)
-                validate_dialog(state)
                 return state
         finally:
             self.cf.CFRelease(app)
@@ -269,7 +268,12 @@ def await_error(windows, reader, pid, executable, launcher, output):
                     "Unexpected owned window; no error acknowledgement sent"
                 )
             row["dialog"] = reader.snapshot()
-            validate_denial((output / "app-stderr.log").read_text())
+            try:
+                validate_dialog(row["dialog"])
+                validate_denial((output / "app-stderr.log").read_text())
+            except RuntimeError as error:
+                row.update(result="FAIL before acknowledgement", error=str(error))
+                raise
             row["result"] = "PASS exact induced error"
             return window, row["dialog"]
         raise RuntimeError("Expected startup-error dialog did not appear")
@@ -285,8 +289,9 @@ def acknowledge_error(windows, reader, pid, executable, window_id, status, recei
     if window["id"] != window_id:
         raise RuntimeError("The exact startup-error window changed")
     dialog = reader.snapshot()
-    keyboard = NativeKeys()
     receipt.update(dialog_before_Return=dialog, down_started=None)
+    validate_dialog(dialog)
+    keyboard = NativeKeys()
     try:
         if keyboard.core.CGEventSourceKeyState(0, CODES["return"][1]):
             raise RuntimeError("Return is already held; no acknowledgement sent")
