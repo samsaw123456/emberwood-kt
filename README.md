@@ -37,10 +37,13 @@ keeps your settings. The original **Emberwood** launcher stays available too.
 | Pause, equipment and settings | Esc or P |
 | Mute | M |
 
-Campfires save your place within the current level and award equipment. Spikes,
+Campfires are retry checkpoints within the current level and award equipment. Spikes,
 critters and falls send you back to camp. Bosses reveal their gold weak point
 while resting. Collect the three acorns to open each exit. Hidden fireflies and
 gems are optional.
+
+Closing the game ends the current run. Sound, motion settings and your best
+completion time are saved for your next visit.
 
 ## Build or edit
 

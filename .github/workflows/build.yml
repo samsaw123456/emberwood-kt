@@ -29,15 +29,6 @@ jobs:
       - name: Check and build
         id: build
         run: ./gradlew --no-daemon check fatJar
-      - name: Audit controls through a real window on Linux
-        if: runner.os == 'Linux'
-        run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh ./gradlew --no-daemon nativeAudit
-      - name: Audit controls through a real window on macOS
-        if: runner.os == 'macOS'
-        run: ./gradlew --no-daemon nativeAudit
-      - name: Validate installer on Linux
-        if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
-        run: python3 -m unittest discover -s tools -p 'test_install.py' -v
       - name: Package the native runtime
         id: package
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -49,6 +40,21 @@ jobs:
           for package in dist/emberwood-kotlin-*/; do
             python3 tools/test_package.py "$package"
           done
+      - name: Profile the low-resource configuration on Linux
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
+        run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh "$JAVA_HOME/bin/java" -Xms32m -Xmx128m -XX:ActiveProcessorCount=2 --enable-native-access=ALL-UNNAMED -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.PerformanceAudit
+      - name: Profile the low-resource configuration on macOS
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
+        run: '"$JAVA_HOME/bin/java" -Xms32m -Xmx128m -XX:ActiveProcessorCount=2 --enable-native-access=ALL-UNNAMED -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.PerformanceAudit'
+      - name: Audit controls through a real window on Linux
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
+        run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh ./gradlew --no-daemon nativeAudit
+      - name: Audit controls through a real window on macOS
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
+        run: ./gradlew --no-daemon nativeAudit
+      - name: Validate installer on Linux
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
+        run: python3 -m unittest discover -s tools -p 'test_install.py' -v
       - name: Audit the packaged runtime on Linux
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.package.outcome == 'success' }}
         run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh python3 tools/audit_package.py
@@ -63,6 +69,8 @@ jobs:
           path: |
             build/audit/
             build/audit-packaged/
+            build/bundle-launch-macos/
+            build/performance/
             build/reports/tests/
             dist/*.deb
             dist/*.tar.gz

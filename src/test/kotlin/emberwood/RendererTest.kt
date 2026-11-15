@@ -1,5 +1,6 @@
 package emberwood
 
+import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
@@ -10,6 +11,26 @@ import kotlin.test.assertTrue
 
 class RendererTest {
     private val output = Path.of("build", "render-audit")
+
+    @Test
+    fun cachedResizingPreservesOriginalPixelArtwork() {
+        val path = "pixel/nature/sunnyland/tree.png"
+        for (tint in listOf(null, "749380")) {
+            val source = if (tint == null) Assets.image(path) else Assets.tinted(path, tint)
+            val direct = BufferedImage(226, 270, BufferedImage.TYPE_INT_ARGB)
+            val graphics = direct.createGraphics()
+            graphics.composite = java.awt.AlphaComposite.Src
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR)
+            graphics.drawImage(source, 0, 0, 226, 270, null)
+            graphics.dispose()
+            val cached = Assets.scaled(path, tint, 226, 270)
+            assertTrue(direct.getRGB(0, 0, 226, 270, null, 0, 226).contentEquals(cached.getRGB(0, 0, 226, 270, null, 0, 226)))
+            assertTrue(cached === Assets.scaled(path, tint, 226, 270), "Repeated sizes reuse pixel storage")
+            repeat(45) { Assets.scaled(path, tint, 300 + it, 300) }
+            val afterEviction = Assets.scaled(path, tint, 226, 270)
+            assertTrue(direct.getRGB(0, 0, 226, 270, null, 0, 226).contentEquals(afterEviction.getRGB(0, 0, 226, 270, null, 0, 226)))
+        }
+    }
 
     private fun frame(game: Game): BufferedImage {
         val image = BufferedImage(1152, 648, BufferedImage.TYPE_INT_ARGB)

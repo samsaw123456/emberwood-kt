@@ -20,11 +20,11 @@ def main():
         "Emberwood Kotlin.app" if system == "Darwin" else "Emberwood Kotlin"
     )
     content = app / "Contents" if system == "Darwin" else app
-    java = content / "runtime/bin/java"
+    java = content / (
+        "runtime/Contents/Home/bin/java" if system == "Darwin" else "runtime/bin/java"
+    )
     jar = content / (
-        "Resources/emberwood-kotlin.jar"
-        if system == "Darwin"
-        else "lib/emberwood-kotlin.jar"
+        "app/emberwood-kotlin.jar" if system == "Darwin" else "lib/emberwood-kotlin.jar"
     )
     tests = ROOT / "build/classes/kotlin/test"
     if not java.is_file() or not jar.is_file() or not tests.is_dir():

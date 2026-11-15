@@ -24,7 +24,8 @@ Python 3.11 or newer is needed only by maintainers for packaging.
 the fat JAR plus `jlink`'s desktop runtime. Run packaging on each target operating
 system/CPU. It does not cross-package a Linux JVM into a macOS application.
 Linux portable archives include a per-user installer. macOS ZIPs contain an app
-bundle, icon, Info.plist, ad-hoc signature and per-user installer. Runtime and
+bundle created by the JDK's `jpackage` native launcher, icon, Info.plist, ad-hoc
+signature and per-user installer. Runtime and
 artwork are bundled unchanged with their notices. No network is used by the app.
 
 Installers stage replacements before moving the prior app, refuse to overwrite
@@ -64,6 +65,15 @@ and Ruff check/format checks pass for the packaging/bootstrap tooling.
 
 These fixture tests do not substitute for the native game's final package/control
 checks or macOS CI results, which are recorded in the overall verification report.
+
+The first macOS installation check caught a copied-bundle signature failure in
+the management marker. The bundle now puts that resource under `Contents/Resources`,
+uses `jpackage`'s native executable, copies signed bundles with `ditto`, and verifies
+signatures after staging and installation. This follows [Apple's bundle-signing
+guidance](https://developer.apple.com/library/archive/technotes/tn2206/) and the
+[Java 25 packaging tool](https://docs.oracle.com/en/java/javase/25/docs/specs/man/jpackage.html).
+The corrected macOS path must pass the native CI installation/GUI checks before
+it is called verified.
 
 ## Actual Linux package and launcher checks
 

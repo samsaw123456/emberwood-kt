@@ -15,7 +15,7 @@ case $(uname -s) in
         icon="$base/icons/hicolor/512x512/apps/emberwood-kotlin.png"
         ;;
     Darwin)
-        marker=Contents/.emberwood-kotlin-managed
+        marker=Contents/Resources/.emberwood-kotlin-managed
         app="$bundle/Emberwood Kotlin.app"
         destination="$HOME/Applications/Emberwood Kotlin.app"
         ;;
@@ -39,6 +39,7 @@ if [[ -e "$destination" && ! -f "$destination/$marker" ]]; then fail "Refusing t
 parent=$(dirname -- "$destination")
 mkdir -p -- "$parent"
 work=$(mktemp -d "$parent/.emberwood-install.XXXXXX")
+staged="$work/app"
 cleanup() {
     if [[ ! -e "$destination" && -e "$work/previous" ]]; then mv -- "$work/previous" "$destination"; fi
     rm -rf -- "$work"
@@ -47,10 +48,16 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
-cp -R -- "$app" "$work/app"
+if [[ $(uname -s) == Darwin ]]; then
+    staged="$work/Emberwood Kotlin.app"
+    ditto "$app" "$staged"
+    codesign --verify --deep --strict "$staged"
+else
+    cp -R -- "$app" "$staged"
+fi
 # Retain the previous app until the staged replacement is complete.
 if [[ -e "$destination" ]]; then mv -- "$destination" "$work/previous"; fi
-if ! mv -- "$work/app" "$destination"; then
+if ! mv -- "$staged" "$destination"; then
     [[ ! -e "$work/previous" ]] || mv -- "$work/previous" "$destination"
     fail 'Could not install the replacement; the previous app was restored.'
 fi

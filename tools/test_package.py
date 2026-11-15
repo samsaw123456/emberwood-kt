@@ -3,6 +3,7 @@
 import argparse
 import os
 import platform
+import plistlib
 import subprocess
 import tempfile
 from pathlib import Path
@@ -28,9 +29,12 @@ def main():
             if mac
             else home / "data/emberwood-kotlin/app"
         )
-        launcher = app / (
-            "Contents/MacOS/emberwood-kotlin" if mac else "bin/emberwood-kotlin"
-        )
+        if mac:
+            with (app / "Contents/Info.plist").open("rb") as stream:
+                executable = plistlib.load(stream)["CFBundleExecutable"]
+            launcher = app / "Contents/MacOS" / executable
+        else:
+            launcher = app / "bin/emberwood-kotlin"
         # A deliberately unusable Java environment proves the bundle supplies its own.
         env.update(
             JAVA_HOME="/missing-global-java", EMBERWOOD_JAVA_HOME="/missing-global-java"
@@ -50,6 +54,12 @@ def main():
                 env=env,
                 check=True,
                 timeout=60,
+            )
+            subprocess.run(
+                ["python3", ROOT / "tools/mac_bundle_smoke.py", app],
+                env=env,
+                check=True,
+                timeout=90,
             )
         else:
             desktop = home / "data/applications/org.emberwood.kotlin.desktop"

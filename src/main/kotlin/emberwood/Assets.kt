@@ -15,9 +15,19 @@ import kotlin.math.roundToInt
 
 /** Original licensed resources are loaded once and never modified on disk. */
 object Assets {
+    private data class ScaledKey(
+        val path: String,
+        val tint: String?,
+        val width: Int,
+        val height: Int,
+    )
+
     private val images = mutableMapOf<String, BufferedImage>()
     private val tints = mutableMapOf<Pair<String, String>, BufferedImage>()
     private val colors = mutableMapOf<String, Color>()
+    private val scaledImages = LinkedHashMap<ScaledKey, BufferedImage>(32, 0.75f, true)
+    private var scaledPixels = 0L
+    private const val SCALED_PIXEL_LIMIT = 2L * 1024 * 1024 // At most 8 MiB of cached pixel storage.
     val regular: Font = font("DejaVuSans.ttf")
     val bold: Font = font("DejaVuSans-Bold.ttf")
 
@@ -64,6 +74,41 @@ object Assets {
             }
             output
         }
+
+    /** Tree and character sizes are fixed; avoid resampling their PNGs on every frame. */
+    fun scaled(
+        path: String,
+        tint: String?,
+        width: Int,
+        height: Int,
+    ): BufferedImage {
+        require(width > 0 && height > 0)
+        val source = if (tint == null) image(path) else tinted(path, tint)
+        if (source.width == width && source.height == height) return source
+        val key = ScaledKey(path, tint, width, height)
+        scaledImages[key]?.let { return it }
+        val output = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+        val graphics = output.createGraphics()
+        try {
+            graphics.composite = java.awt.AlphaComposite.Src
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR)
+            graphics.drawImage(source, 0, 0, width, height, null)
+        } finally {
+            graphics.dispose()
+        }
+        val pixels = width.toLong() * height
+        if (pixels <= SCALED_PIXEL_LIMIT) {
+            while (scaledPixels + pixels > SCALED_PIXEL_LIMIT) {
+                val oldest = scaledImages.entries.iterator()
+                val image = oldest.next().value
+                scaledPixels -= image.width.toLong() * image.height
+                oldest.remove()
+            }
+            scaledImages[key] = output
+            scaledPixels += pixels
+        }
+        return output
+    }
 }
 
 /** Canvas coordinates retain the Godot game's 1152 x 648 world scale. */
@@ -201,8 +246,9 @@ internal class Art(
         height: Number,
         tint: String? = null,
     ) {
-        val image = if (tint == null) Assets.image(path) else Assets.tinted(path, tint)
-        g.drawImage(image, x.toDouble().roundToInt(), y.toDouble().roundToInt(), width.toInt(), height.toInt(), null)
+        if (width.toInt() <= 0 || height.toInt() <= 0) return
+        val image = Assets.scaled(path, tint, width.toInt(), height.toInt())
+        g.drawImage(image, x.toDouble().roundToInt(), y.toDouble().roundToInt(), null)
     }
 
     fun frame(

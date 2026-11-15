@@ -446,6 +446,7 @@ class SimulationTest {
 /** Simulation inputs only; independent assertions compare them to the exported original route. */
 internal class RouteDriver(
     private val game: Game,
+    private val nativeTiming: Boolean = false,
     private val advance: (InputFrame) -> Unit = { game.step(1.0 / 60.0, it) },
 ) {
     private var jumping = false
@@ -495,14 +496,36 @@ internal class RouteDriver(
         }
         val launchX = game.player.x
         val clearShelf = moving == null && step.y < game.player.y && abs(step.x - game.player.x) < 120
-        repeat(210) { frame ->
-            val target = if (moving != null) Vec(moving.bounds.x + moving.bounds.w / 2, moving.bounds.y) else Vec(step.x, step.y)
-            if (frame == 19 || frame == 60) {
-                jumping = false
-            } else if (frame == 20) {
-                jumping = true
+        val nearbyPatrol =
+            nativeTiming &&
+                game.level.critters.any {
+                    !it.out &&
+                        abs(it.position(game.level.age).x - launchX) < 100 &&
+                        abs(it.position(game.level.age).y - game.player.y) < 40
+                }
+        val takeoffDelay =
+            if (nearbyPatrol) {
+                6
+            } else if (clearShelf) {
+                4
+            } else {
+                0
             }
-            tick(if (clearShelf && frame < 4) launchX else target.x)
+        val startedAt = game.level.age
+        var jumpPhase = 0
+        repeat(210) { iteration ->
+            val frame = if (nativeTiming) ((game.level.age - startedAt) * 60 + 1e-6).toInt() else iteration
+            val target = if (moving != null) Vec(moving.bounds.x + moving.bounds.w / 2, moving.bounds.y) else Vec(step.x, step.y)
+            if (frame >= 60) {
+                jumping = false
+            } else if (frame >= 19 && jumpPhase == 0) {
+                jumping = false
+                jumpPhase = 1
+            } else if (frame >= 20 && jumpPhase == 1) {
+                jumping = true
+                jumpPhase = 2
+            }
+            tick(if (frame < takeoffDelay) launchX else target.x)
             if (game.state == GameState.CHAPTER_COMPLETE || game.state == GameState.WON) return true
             if (game.state != GameState.PLAYING) return false
             if (step.kind == "mushroom" && game.player.vy < -700) return true
@@ -516,8 +539,11 @@ internal class RouteDriver(
         if (!walk(boss.arenaMin + 60)) return false
         var previousPhase = ""
         var jumpFrame = -1
+        var jumpPhase = 0
         var escapeX = boss.arenaMin + 300
-        repeat(2400) { frame ->
+        val startedAt = game.level.age
+        repeat(2400) { iteration ->
+            val frame = if (nativeTiming) ((game.level.age - startedAt) * 60 + 1e-6).toInt() else iteration
             if (boss.defeated) {
                 jumping = false
                 return true
@@ -529,6 +555,7 @@ internal class RouteDriver(
                 } else if (boss.phase == "rest") {
                     jumping = false
                     jumpFrame = frame + 1
+                    jumpPhase = 0
                 }
                 previousPhase = boss.phase
             }
@@ -540,9 +567,21 @@ internal class RouteDriver(
                     boss.x
                 }
             if (jumpFrame >= 0) {
-                when (frame - jumpFrame) {
-                    0, 20 -> jumping = true
-                    19, 65 -> jumping = false
+                val sinceJump = frame - jumpFrame
+                when {
+                    sinceJump >= 65 -> jumping = false
+                    sinceJump >= 20 && jumpPhase == 2 -> {
+                        jumping = true
+                        jumpPhase = 3
+                    }
+                    sinceJump >= 19 && jumpPhase == 1 -> {
+                        jumping = false
+                        jumpPhase = 2
+                    }
+                    sinceJump >= 0 && jumpPhase == 0 -> {
+                        jumping = true
+                        jumpPhase = 1
+                    }
                 }
             }
             tick(target)

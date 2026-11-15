@@ -2,10 +2,12 @@ package emberwood
 
 import java.awt.Robot
 import java.awt.event.InputEvent
+import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.image.BufferedImage
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
@@ -24,6 +26,17 @@ private class NativeAudit(
     private val robot = Robot().apply { autoDelay = 8 }
     private val rows = mutableListOf<String>()
     private val evidence = mutableListOf<String>()
+    private val pendingImages = mutableListOf<Pair<String, BufferedImage>>()
+
+    private data class Delivery(
+        val count: Int,
+        val nanos: Long,
+    )
+
+    private val deliveries = ConcurrentHashMap<Triple<Int, Int, Boolean>, Delivery>()
+    private val inputTimings = mutableListOf<String>()
+    private var currentCase = "startup"
+    private val selectedCases = System.getProperty("audit.filter")?.let(::Regex)
     private val downKeys = mutableSetOf<Int>()
     private val nativeKeys = mutableSetOf<String>()
     private var sequence = 0
@@ -41,9 +54,17 @@ private class NativeAudit(
                 val pair = openWindow(Settings(preferences))
                 frame = pair.first
                 panel = pair.second
+                panel.addKeyListener(
+                    object : KeyAdapter() {
+                        override fun keyPressed(event: KeyEvent) = delivered(event, true)
+
+                        override fun keyReleased(event: KeyEvent) = delivered(event, false)
+                    },
+                )
             }
             robot.delay(700)
             directionCases()
+            gentleCameraDirections()
             jumpCases()
             dashCases()
             weaponCases()
@@ -64,6 +85,7 @@ private class NativeAudit(
         } finally {
             releaseAll()
             if (::frame.isInitialized) edt { frame.dispose() }
+            flushImages()
             Files.writeString(
                 output.resolve("controls.tsv"),
                 "Binding\tState\tExpected observable effect\tAutomatic result\tEvidence (visual review required)\n" +
@@ -71,6 +93,10 @@ private class NativeAudit(
                     "\n",
             )
             preferences.toFile().deleteRecursively()
+            Files.writeString(
+                output.resolve("input-latency.tsv"),
+                "Case\tKey code\tLocation\tAction\tDelivery milliseconds\n" + inputTimings.joinToString("\n") + "\n",
+            )
         }
         check(failures == 0) { "$failures native control cases failed; see ${output.resolve("controls.tsv")}" }
     }
@@ -82,6 +108,8 @@ private class NativeAudit(
         gear: Boolean = false,
         body: () -> Unit,
     ) {
+        if (selectedCases != null && !selectedCases.containsMatchIn("$state/$binding")) return
+        currentCase = "$state/$binding"
         evidence.clear()
         var result = "PASS automatic; visual review pending"
         try {
@@ -93,9 +121,11 @@ private class NativeAudit(
             failures++
             result = "FAIL: ${failure.message ?: failure.javaClass.simpleName}".replace('\t', ' ').replace('\n', ' ')
             System.err.println("$binding / $state: $result")
+            failure.printStackTrace()
             if (::panel.isInitialized) runCatching { snap("$state-$binding-failure") }
         } finally {
             releaseAll()
+            flushImages()
             rows.add("$binding\t$state\t$expected\t$result\t${evidence.joinToString(", ")}")
         }
     }
@@ -131,6 +161,10 @@ private class NativeAudit(
             }
             panel.game.player.reset(Vec(300.0, 536.0))
             panel.game.invincibleLeft = 0.0
+        }
+        // Desktop transitions run on its timer: let it observe PLAYING before preparing another menu.
+        await("Fixture gameplay transition") { edt { panel.game.elapsed > 0 } }
+        edt {
             when (state) {
                 GameState.PAUSED -> panel.game.pause()
                 GameState.RESPAWNING -> {
@@ -145,8 +179,7 @@ private class NativeAudit(
             panel.requestFocusInWindow()
             panel.repaint()
         }
-        robot.delay(120)
-        check(edt { frame.isFocused && panel.isFocusOwner }) { "Native window/panel did not receive keyboard focus" }
+        await("Native window/panel keyboard focus") { edt { frame.isFocused && panel.isFocusOwner } }
     }
 
     private fun snap(label: String): BufferedImage {
@@ -162,19 +195,63 @@ private class NativeAudit(
             }
         val image = robot.createScreenCapture(bounds)
         val name = "%04d-%s.png".format(sequence++, label.replace(Regex("[^A-Za-z0-9-]"), "-").take(110))
-        ImageIO.write(image, "png", output.resolve(name).toFile())
+        pendingImages.add(name to image)
         evidence.add(name)
         return image
     }
 
+    private fun flushImages() {
+        for ((name, image) in pendingImages) check(ImageIO.write(image, "png", output.resolve(name).toFile()))
+        pendingImages.clear()
+    }
+
+    private fun delivered(
+        event: KeyEvent,
+        down: Boolean,
+    ) {
+        val binding = Triple(event.keyCode, event.keyLocation, down)
+        deliveries[binding] = Delivery((deliveries[binding]?.count ?: 0) + 1, System.nanoTime())
+    }
+
+    private fun await(
+        description: String,
+        condition: () -> Boolean,
+    ) {
+        val deadline = System.nanoTime() + 3_000_000_000L
+        while (!condition()) {
+            check(System.nanoTime() < deadline) { "$description did not complete within three seconds" }
+            robot.delay(5)
+        }
+    }
+
+    private fun received(
+        binding: Triple<Int, Int, Boolean>,
+        count: Int,
+        started: Long,
+    ) {
+        await("Physical key event $binding") { (deliveries[binding]?.count ?: 0) >= count }
+        val milliseconds = ((deliveries[binding]?.nanos ?: started) - started) / 1e6
+        inputTimings.add("$currentCase\t${binding.first}\t${binding.second}\t${if (binding.third) "down" else "up"}\t$milliseconds")
+    }
+
+    private fun location(key: Int) = if (key == KeyEvent.VK_SHIFT) KeyEvent.KEY_LOCATION_LEFT else KeyEvent.KEY_LOCATION_STANDARD
+
     private fun down(key: Int) {
+        val binding = Triple(key, location(key), true)
+        val expected = (deliveries[binding]?.count ?: 0) + 1
+        val started = System.nanoTime()
         robot.keyPress(key)
         downKeys.add(key)
+        if (edt { frame.isFocused }) received(binding, expected, started)
     }
 
     private fun up(key: Int) {
+        val binding = Triple(key, location(key), false)
+        val expected = (deliveries[binding]?.count ?: 0) + 1
+        val started = System.nanoTime()
         robot.keyRelease(key)
         downKeys.remove(key)
+        if (edt { frame.isFocused }) received(binding, expected, started)
     }
 
     private fun tap(key: Int) {
@@ -186,13 +263,35 @@ private class NativeAudit(
 
     private fun physical(vararg events: Pair<String, Boolean>) {
         val command = mutableListOf("python3", "tools/physical_key.py")
+        val expected = mutableMapOf<Triple<Int, Int, Boolean>, Int>()
         for ((key, down) in events) {
             command.add(key)
             command.add(if (down) "down" else "up")
+            val (code, where) =
+                when (key) {
+                    "left-shift" -> KeyEvent.VK_SHIFT to KeyEvent.KEY_LOCATION_LEFT
+                    "right-shift" -> KeyEvent.VK_SHIFT to KeyEvent.KEY_LOCATION_RIGHT
+                    "keypad-enter" -> KeyEvent.VK_ENTER to KeyEvent.KEY_LOCATION_NUMPAD
+                    else -> {
+                        val code =
+                            when (key) {
+                                "space" -> KeyEvent.VK_SPACE
+                                "left" -> KeyEvent.VK_LEFT
+                                "right" -> KeyEvent.VK_RIGHT
+                                "up" -> KeyEvent.VK_UP
+                                "tab" -> KeyEvent.VK_TAB
+                                else -> KeyEvent.getExtendedKeyCodeForChar(key.single().uppercaseChar().code)
+                            }
+                        code to KeyEvent.KEY_LOCATION_STANDARD
+                    }
+                }
+            val binding = Triple(code, where, down)
+            expected[binding] = (expected[binding] ?: deliveries[binding]?.count ?: 0) + 1
         }
+        val started = System.nanoTime()
         check(ProcessBuilder(command).inheritIO().start().waitFor() == 0) { "Native physical key injection failed" }
         for ((key, down) in events) if (down) nativeKeys.add(key) else nativeKeys.remove(key)
-        robot.delay(30)
+        if (edt { frame.isFocused }) for ((binding, count) in expected) received(binding, count, started)
     }
 
     private fun releaseAll() {
@@ -296,15 +395,18 @@ private class NativeAudit(
                     "Fox moves screen-${if (sign < 0) "left" else "right"}, faces that way, then stops after release",
                 ) {
                     if (scrolling) {
-                        edt { panel.game.player.reset(Vec(700.0, 536.0)) }
-                        robot.delay(650)
+                        edt {
+                            val x = if (sign > 0) 680.0 else 800.0
+                            panel.game.player.reset(Vec(x, 536.0))
+                            panel.game.cameraX = x - 380
+                        }
                     }
                     val before = foxCenter(snap("direction-start"))
                     down(key)
                     robot.delay(210)
                     val after = foxCenter(snap("direction-held"))
                     up(key)
-                    robot.delay(200)
+                    await("Movement stops after release") { edt { abs(panel.game.player.vx) < .01 } }
                     snap("direction-released")
                     check((after.first - before.first) * sign > if (scrolling) 4 else 20) {
                         "Rendered direction was ${after.first - before.first}, expected sign $sign"
@@ -370,9 +472,11 @@ private class NativeAudit(
                 up(key)
                 robot.delay(60)
                 snap("jump-released")
-                tap(key)
-                snap("jump-second")
+                down(key)
+                robot.delay(40)
                 check(edt { panel.game.player.jumpsLeft == 0 && panel.game.player.vy < 0 })
+                snap("jump-second")
+                up(key)
                 tap(key)
                 snap("jump-third-rejected")
                 check(edt { panel.game.player.jumpsLeft == 0 })
@@ -398,6 +502,42 @@ private class NativeAudit(
             tap(KeyEvent.VK_SPACE)
             snap("jump-alternate-repress")
             check(edt { panel.game.player.jumpsLeft == 0 })
+        }
+    }
+
+    private fun gentleCameraDirections() {
+        for ((key, sign) in directions) {
+            case(
+                "${KeyEvent.getKeyText(key)} / Gentle camera",
+                GameState.PLAYING,
+                "The camera anchors the fox while scenery moves opposite the requested world direction; release stops movement",
+            ) {
+                edt {
+                    val x = if (sign > 0) 680.0 else 800.0
+                    panel.game.player.reset(Vec(x, 536.0))
+                    panel.game.cameraX = x - 380
+                }
+                tap(KeyEvent.VK_ESCAPE)
+                click("motion")
+                snap("gentle-camera-setting")
+                tap(KeyEvent.VK_ESCAPE)
+
+                fun spikeEdge(image: BufferedImage): Int {
+                    // The first visible salmon spike-base strip is an independent world landmark.
+                    val edge = (0 until image.width).firstOrNull { (image.getRGB(it, 534) and 0xffffff) == 0xe2987f }
+                    return checkNotNull(edge) { "World landmark is not visible" }
+                }
+                val before = snap("gentle-camera-before")
+                down(key)
+                robot.delay(210)
+                val during = snap("gentle-camera-held")
+                check(abs(foxCenter(during).first - foxCenter(before).first) < 20) { "Gentle camera did not anchor the fox" }
+                check((spikeEdge(during) - spikeEdge(before)) * sign < -15) { "Scenery moved in the wrong direction" }
+                up(key)
+                await("Gentle movement stops after release") { edt { abs(panel.game.player.vx) < .01 } }
+                snap("gentle-camera-released")
+                check(edt { panel.game.state == GameState.PLAYING && panel.game.deaths == 0 && panel.game.player.facing == sign })
+            }
         }
     }
 
@@ -532,12 +672,14 @@ private class NativeAudit(
                 "Selected weapon appears, fires once per hold, then fires again after release",
                 true,
             ) {
-                edt { panel.game.equipment.equip(item.id, true) }
+                edt {
+                    panel.game.equipment.equip(item.id, true)
+                    panel.game.player.reset(Vec(300.0, 300.0))
+                }
                 snap("weapon-equipped")
                 down(KeyEvent.VK_J)
-                robot.delay(50)
+                await("All ${item.name} projectiles spawn") { edt { panel.game.shots.size == item.angles.size } }
                 snap("weapon-projectile")
-                check(edt { panel.game.shots.size == item.angles.size })
                 robot.delay((item.range / item.speed * 1000 + 800).toInt())
                 snap("weapon-held-no-repeat")
                 check(edt { panel.game.shots.isEmpty() })
@@ -1028,7 +1170,7 @@ private class NativeAudit(
                         }
                     }
                 try {
-                    robot.delay(180)
+                    await("Auxiliary window receives focus") { edt { other.isFocused } }
                     check(edt { panel.game.state == GameState.PAUSED }) { "OS focus change did not pause" }
                     if (key != null) up(key) else physical(binding to false)
                 } finally {
@@ -1038,7 +1180,7 @@ private class NativeAudit(
                         panel.requestFocusInWindow()
                     }
                 }
-                robot.delay(150)
+                await("Game window regains focus") { edt { frame.isFocused && panel.isFocusOwner } }
                 snap("focus-return-paused")
                 check(edt { panel.game.state == GameState.PAUSED })
                 tap(KeyEvent.VK_ESCAPE)
@@ -1100,7 +1242,7 @@ private class NativeAudit(
         val persisted = Settings(preferences).muted == muted
         val result = if (closed && persisted) "PASS automatic" else "FAIL"
         rows.add(
-            "OS window close\tALL\tWindow closes, audio terminates, preferences persist\t" +
+            "Window lifecycle close (programmatic)\tALL\tWindow closes and preferences persist; physical close checked separately\t" +
                 "$result\t${evidence.joinToString(", ")}",
         )
         if (!closed || !persisted) failures++

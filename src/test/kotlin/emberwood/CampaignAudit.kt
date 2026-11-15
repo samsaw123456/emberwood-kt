@@ -2,9 +2,13 @@ package emberwood
 
 import java.awt.Rectangle
 import java.awt.Robot
+import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
@@ -22,6 +26,7 @@ object CampaignAudit {
         var frame: JFrame? = null
         var panel: GamePanel? = null
         val held = mutableSetOf<Int>()
+        val delivery = ConcurrentHashMap<Pair<Int, Boolean>, CountDownLatch>()
         val results = mutableListOf<String>()
 
         fun edt(action: () -> Unit) = SwingUtilities.invokeAndWait(action)
@@ -30,14 +35,17 @@ object CampaignAudit {
             code: Int,
             down: Boolean,
         ) {
-            if (down && held.add(code)) robot.keyPress(code)
-            if (!down && held.remove(code)) robot.keyRelease(code)
+            val changed = if (down) held.add(code) else held.remove(code)
+            if (!changed) return
+            val received = CountDownLatch(1)
+            delivery[code to down] = received
+            if (down) robot.keyPress(code) else robot.keyRelease(code)
+            check(received.await(2, TimeUnit.SECONDS)) { "Physical key $code/$down did not reach the focused window" }
         }
 
         fun release() = held.toList().forEach { key(it, false) }
 
         fun snap(label: String) {
-            robot.waitForIdle()
             var bounds = Rectangle()
             edt {
                 val view = checkNotNull(panel)
@@ -51,6 +59,17 @@ object CampaignAudit {
                 val window = openWindow(Settings(preferences))
                 frame = window.first
                 panel = window.second
+                window.second.addKeyListener(
+                    object : KeyAdapter() {
+                        override fun keyPressed(event: KeyEvent) {
+                            delivery.remove(event.keyCode to true)?.countDown()
+                        }
+
+                        override fun keyReleased(event: KeyEvent) {
+                            delivery.remove(event.keyCode to false)?.countDown()
+                        }
+                    },
+                )
             }
             robot.delay(600)
             snap("title")
@@ -63,12 +82,12 @@ object CampaignAudit {
             for (chapter in 0 until count) {
                 check(game.stageIndex == chapter)
                 val driver =
-                    RouteDriver(game) { input ->
-                        var age = 0.0
-                        edt { age = game.level.age }
+                    RouteDriver(game, nativeTiming = true) { input ->
                         key(KeyEvent.VK_A, input.left)
                         key(KeyEvent.VK_D, input.right)
                         key(KeyEvent.VK_SPACE, input.jumpHeld)
+                        var age = 0.0
+                        edt { age = game.level.age }
                         val deadline = System.nanoTime() + 2_000_000_000L
                         var advanced = false
                         while (!advanced) {
@@ -80,10 +99,13 @@ object CampaignAudit {
                 snap("chapter-${chapter + 1}-entry")
                 for ((index, route) in game.level.definition.route
                     .withIndex()) {
+                    // Native startup may reach this ledge at a different opossum
+                    // patrol phase; stop outside its full patrol width before jumping.
+                    val approach = if (chapter == 0 && index == 4) route.copy(x = 1225.0) else route
                     check(
-                        driver.follow(route),
+                        driver.follow(approach),
                     ) { "Chapter ${chapter + 1} route $index $route failed at ${game.player.position}, ${game.state}" }
-                    if (index % 8 == 0) snap("chapter-${chapter + 1}-route-$index")
+                    println("Chapter ${chapter + 1}, route $index: ${game.player.position}; age=${game.level.age}")
                 }
                 if (game.boss != null) {
                     snap("chapter-${chapter + 1}-boss-before")

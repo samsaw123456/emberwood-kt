@@ -46,9 +46,22 @@ desktop mix. Java audio flags alone do not satisfy this check.
 - Bootstrap: **passed**. Empty-cache Java download, checksum, extraction and
   offline reuse were exercised without changing system Java.
 - Kotlin formatting: **passed**. The final source is formatted with ktlint.
-- Final compiled tests, native controls, actual sound, performance, packaged
-  launch and macOS execution: **pending final runs**. Detailed results will replace
-  this entry after execution and visual inspection.
+- Build, lint and automated tests: **passed**, 25 tests. The simulation campaign
+  reaches all 20 levels, all 60 acorns and 20 hidden fireflies, all six guardians
+  and all 13 equipment unlocks with zero retries. Optional gems collected by this
+  route: 196 of 378. This is simulation evidence, not a physical-input playthrough.
+- Artwork review: all eight regions, six guardians, four regular monsters and
+  thirteen equipment appearances were rendered and visually inspected.
+- Actual Linux sound: **passed** for the source JAR and bundled runtime. Physical
+  M input silenced the game's isolated playback stream to zero PCM, then restored
+  audible output. Each phase recorded 96,000 samples; packaged RMS was 437.08
+  before mute, 0 while muted, and 498.96 after unmute.
+- Linux installation and native launcher: **passed** with invalid global Java
+  and internet socket creation blocked. The separate application opens through
+  the desktop registry and closes using physical Alt+F4. See PACKAGING.md.
+- Final native controls, physical campaign, performance and macOS installed
+  execution: **pending final runs**. See PERFORMANCE.md for measurements and
+  rejected experiments; no failed measurement is being labeled passed.
 
 ## Review findings corrected
 

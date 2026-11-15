@@ -27,6 +27,79 @@ def checksum(path):
     path.with_name(path.name + ".sha256").write_text(f"{digest}  {path.name}\n")
 
 
+def build_mac_app(java_home, jar, runtime, stage, version):
+    """Use the JDK's native launcher and standard signed macOS bundle layout."""
+    iconset = stage / "Emberwood.iconset"
+    iconset.mkdir()
+    source_icon = ROOT / "src/main/resources/assets/app/emberwood.png"
+    for size in (16, 32, 128, 256, 512):
+        for scale in (1, 2):
+            suffix = "@2x" if scale == 2 else ""
+            call(
+                "sips",
+                "-z",
+                size * scale,
+                size * scale,
+                source_icon,
+                "--out",
+                iconset / f"icon_{size}x{size}{suffix}.png",
+                stdout=subprocess.DEVNULL,
+            )
+    icon = stage / "Emberwood.icns"
+    call("iconutil", "-c", "icns", iconset, "-o", icon)
+    library = stage / "package-input"
+    library.mkdir()
+    shutil.copy2(jar, library / "emberwood-kotlin.jar")
+    call(
+        java_home / "bin/jpackage",
+        "--type",
+        "app-image",
+        "--name",
+        NAME,
+        "--dest",
+        stage,
+        "--input",
+        library,
+        "--main-jar",
+        "emberwood-kotlin.jar",
+        "--main-class",
+        "emberwood.MainKt",
+        "--runtime-image",
+        runtime,
+        "--app-version",
+        version,
+        "--vendor",
+        "Emberwood contributors",
+        "--mac-package-identifier",
+        "org.emberwood.kotlin",
+        "--icon",
+        icon,
+        "--java-options",
+        "-Xms32m",
+        "--java-options",
+        "-Xmx256m",
+        "--java-options",
+        "--enable-native-access=ALL-UNNAMED",
+    )
+    app = stage / (NAME + ".app")
+    (app / "Contents/Resources" / MARKER).write_text(
+        "Managed by Emberwood Kotlin installer\n"
+    )
+    plist = app / "Contents/Info.plist"
+    with plist.open("rb") as stream:
+        metadata = plistlib.load(stream)
+    metadata["LSMinimumSystemVersion"] = "12.0"
+    with plist.open("wb") as stream:
+        plistlib.dump(metadata, stream)
+    # The native launcher keeps its signature in Mach-O, never in script xattrs.
+    call("codesign", "--force", "--deep", "--sign", "-", app)
+    call("codesign", "--verify", "--deep", "--strict", app)
+    for temporary in (iconset, library, runtime):
+        shutil.rmtree(temporary)
+    icon.unlink()
+    return app
+
+
 def build_deb(app, version, arch, dist):
     if not shutil.which("dpkg-deb"):
         print("dpkg-deb is unavailable; the portable Linux archive is still produced.")
@@ -132,7 +205,9 @@ def build_package(skip_build=False, install=False):
         stage = Path(temporary)
         app = stage / (NAME + ".app" if system == "Darwin" else NAME)
         content = app / "Contents" if system == "Darwin" else app
-        runtime = content / "runtime"
+        runtime = (
+            stage / "linked-runtime" if system == "Darwin" else content / "runtime"
+        )
         call(
             java_home / "bin/jlink",
             "--add-modules",
@@ -144,72 +219,25 @@ def build_package(skip_build=False, install=False):
             "--output",
             runtime,
         )
-        library = content / "Resources" if system == "Darwin" else content / "lib"
-        executable = content / "MacOS" if system == "Darwin" else content / "bin"
-        library.mkdir(parents=True)
-        executable.mkdir(parents=True)
-        shutil.copy2(jar, library / "emberwood-kotlin.jar")
-        icon = ROOT / "src/main/resources/assets/app/emberwood.png"
-        if system == "Linux":
-            shutil.copy2(icon, app / "icon.png")
-        launcher = executable / "emberwood-kotlin"
-        launcher.write_text(
-            "#!/bin/sh\nset -eu\n"
-            'app_dir=$(CDPATH="" cd -- "$(dirname -- "$0")/.." && pwd)\n'
-            'exec "$app_dir/runtime/bin/java" -Xms32m -Xmx256m '
-            "--enable-native-access=ALL-UNNAMED "
-            + (
-                '-Xdock:name="Emberwood Kotlin" '
-                '-Xdock:icon="$app_dir/Resources/Emberwood.icns" '
-                if system == "Darwin"
-                else ""
-            )
-            + (
-                '-jar "$app_dir/Resources/emberwood-kotlin.jar" "$@"\n'
-                if system == "Darwin"
-                else '-jar "$app_dir/lib/emberwood-kotlin.jar" "$@"\n'
-            ),
-        )
-        launcher.chmod(0o755)
-        (content / MARKER).write_text("Managed by Emberwood Kotlin installer\n")
         if system == "Darwin":
-            iconset = stage / "Emberwood.iconset"
-            iconset.mkdir()
-            for size in (16, 32, 128, 256, 512):
-                for scale in (1, 2):
-                    resolution = min(size * scale, 1024)
-                    suffix = "@2x" if scale == 2 else ""
-                    call(
-                        "sips",
-                        "-z",
-                        resolution,
-                        resolution,
-                        icon,
-                        "--out",
-                        iconset / f"icon_{size}x{size}{suffix}.png",
-                        stdout=subprocess.DEVNULL,
-                    )
-            call("iconutil", "-c", "icns", iconset, "-o", library / "Emberwood.icns")
-            shutil.rmtree(iconset)
-            with (content / "Info.plist").open("wb") as stream:
-                plistlib.dump(
-                    {
-                        "CFBundleName": NAME,
-                        "CFBundleDisplayName": NAME,
-                        "CFBundleIdentifier": "org.emberwood.kotlin",
-                        "CFBundleExecutable": "emberwood-kotlin",
-                        "CFBundleIconFile": "Emberwood.icns",
-                        "CFBundlePackageType": "APPL",
-                        "CFBundleShortVersionString": version,
-                        "CFBundleVersion": version,
-                        "NSHighResolutionCapable": True,
-                        "LSMinimumSystemVersion": "12.0",
-                    },
-                    stream,
-                )
-            # Ad-hoc signing preserves local integrity; it is not Apple notarization.
-            call("codesign", "--force", "--deep", "--sign", "-", app)
-            call("codesign", "--verify", "--deep", "--strict", app)
+            app = build_mac_app(java_home, jar, runtime, stage, version)
+        else:
+            library = content / "lib"
+            executable = content / "bin"
+            library.mkdir(parents=True)
+            executable.mkdir(parents=True)
+            shutil.copy2(jar, library / "emberwood-kotlin.jar")
+            icon = ROOT / "src/main/resources/assets/app/emberwood.png"
+            shutil.copy2(icon, app / "icon.png")
+            launcher = executable / "emberwood-kotlin"
+            launcher.write_text(
+                "#!/bin/sh\nset -eu\n"
+                'app_dir=$(CDPATH="" cd -- "$(dirname -- "$0")/.." && pwd)\n'
+                'exec "$app_dir/runtime/bin/java" -Xms32m -Xmx256m '
+                '--enable-native-access=ALL-UNNAMED -jar "$app_dir/lib/emberwood-kotlin.jar" "$@"\n'
+            )
+            launcher.chmod(0o755)
+            (content / MARKER).write_text("Managed by Emberwood Kotlin installer\n")
         for name in ("README.md", "LICENSE", "THIRD_PARTY.md", "VERSION"):
             shutil.copy2(ROOT / name, stage / name)
         shutil.copy2(
@@ -217,7 +245,17 @@ def build_package(skip_build=False, install=False):
         )
         (stage / "Install Emberwood Kotlin.command").chmod(0o755)
         (stage / MARKER).write_text("Managed Emberwood Kotlin package\n")
-        shutil.copytree(stage, destination, symlinks=True)
+        if system == "Darwin":
+            call("ditto", stage, destination)
+            call(
+                "codesign",
+                "--verify",
+                "--deep",
+                "--strict",
+                destination / (NAME + ".app"),
+            )
+        else:
+            shutil.copytree(stage, destination, symlinks=True)
     if system == "Darwin":
         archive = dist / (stem + ".zip")
         call(
