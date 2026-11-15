@@ -54,14 +54,21 @@ Debian packages should be removed with the package manager instead.
 Linux requires a desktop with X11/XWayland and ordinary font/audio libraries.
 Debian packages declare those dependencies for automatic resolution by the
 system installer. Portable archives assume those desktop libraries are present.
-macOS builds require version 12 or newer and the matching CPU architecture.
+Mac bundles declare macOS 12 as their minimum and require the matching CPU
+architecture; native CI verification currently runs on macOS 15, not every earlier
+version.
 Ad-hoc signing verifies package integrity but does not replace Apple signing or
 notarization; no signing identity or Apple account is used by this repository.
 
-The CI matrix builds and runs tests plus the physical-input control audit on
-Linux x86-64/ARM64 and macOS Intel/Apple Silicon, then repeats that audit using the packaged runtime and JAR before retaining artifacts. A matrix
-configuration is not proof of a successful run: consult the actual workflow
-results and the project's audit records before claiming a platform verified.
+The CI matrix builds and tests on Linux x86-64/ARM64 and macOS Intel/Apple Silicon.
+Linux runs the full physical-input inventory through both the source JAR and the
+packaged runtime. Mac checks actual installation and the cached source launcher,
+profiles both native apps, then runs the full control inventory and fourteen
+sound-output cases through the packaged native app. The source and packaged Mac
+JAR/runtime identities are compared separately; source launcher smoke tests are
+not a second complete control audit. Every job retains its evidence. A configured
+matrix is not proof of a successful run: consult the actual workflow results and
+the project's audit records before claiming a platform verified.
 
 ## Installer verification performed locally
 
@@ -98,6 +105,10 @@ field (0.1.0 becomes 1.1.0), while `CFBundleShortVersionString`, the game and th
 download keep the actual release version 0.1.0. The native installation test
 checks both fields. The validation rule is in [OpenJDK's macOS bundle-version
 parser](https://github.com/openjdk/jdk25u/blob/master/src/jdk.jpackage/macosx/classes/jdk/jpackage/internal/CFBundleVersion.java).
+The current shared builder also passes the unprefixed `adventure-games` category
+to `jpackage`, which adds `public.app-category.` itself. Actual installation in
+run `43715029003` caught the earlier duplicated prefix; both the fixture and the
+native package test now check the final category value independently.
 Both macOS architectures in CI run `43695656000` caught this validation failure.
 The corrected packages built on both architectures in run `43697597725`.
 The ARM Mac also passed actual installation, signature checks, LaunchServices

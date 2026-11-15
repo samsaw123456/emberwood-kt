@@ -8,7 +8,15 @@ campaign does not mark physical controls passed.
 The native audit injects OS input and captures before/during/after window frames.
 Its automatic assertions are followed by inspection of every referenced frame.
 Source results live in `build/audit/controls.tsv`; bundled-runtime results live
-in `build/audit-packaged/controls.tsv`. The complete inventory contains 280 cases.
+in `build/audit-packaged/controls.tsv`. The complete inventory contains 280 cases. Final Linux x64 source and bundled
+records are `build/audit-source-88283267-final/controls-reviewed.tsv` and
+`build/audit-packaged-88283267-final/controls-reviewed.tsv`; both have complete
+rendered/audio evidence. Linux ARM64 source and bundled runs also have all 280
+cases and all 1,208 referenced frames reviewed, at
+`build/ci-final-8828-linux-arm64/build/{audit,audit-packaged}/controls-reviewed.tsv`.
+Those ARM runs had no output device: fifteen audio-related rows retain an
+unverified output component, and the lifecycle row awaits physical window-close
+proof. The tracked table keeps these gaps and the Mac inventory separate.
 Automatic assertions, visual inspection and audio-output verification are
 recorded separately in the coverage TSV and [verification record](VERIFICATION.md).
 A failed or unfinished final-build rerun does not inherit a previous build's pass.

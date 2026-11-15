@@ -335,8 +335,8 @@ ARM64 pass; the earlier raw-JVM failures remain recorded above.
 
 ## Comparing the two Mac launch routes
 
-The README's `./emberwood-kotlin` source launcher directly executes its private
-Java runtime. The native application pass above does not establish current
+Before the native source-cache correction, `./emberwood-kotlin` directly executed
+its private Java runtime. The native application pass above did not establish
 performance for that separate route. A same-runner comparison is available after
 building the production JAR, test classes and native package:
 
@@ -380,8 +380,13 @@ its specific cause. No production timer change follows from this comparison.
 
 Evidence and exact PNG/metric journals are under
 `build/ci-launcher-comparison-arm-0d3d50e7/performance-launcher-comparison/`.
-This result confirms that the direct-Java source launch route needs correction;
-it is not verification of the subsequently restored audio initialization order.
+This result motivated the shared cached native-app source launcher. The corrected
+source route uses the same builder, runtime recipe and signing policy as the
+download. `tools/test_source_mac_native.py` exercises actual first-run preparation,
+CLI failures, offline cache reuse and physical launch/close, then exports the exact
+app path for `mac_app_profile.py --app`. Its Mac CI validation is still pending;
+the historical comparison is not verification of the subsequently restored audio
+initialization order or the new source launcher.
 
 ## Final Linux artifact review before the footer correction
 
@@ -407,3 +412,29 @@ Evidence and independent frame/metric manifests are in
 `build/ci-final-linux-arm64/build/performance/independent-review/`. The known
 unavailable-audio footer inconsistency is visible in this older build; these
 passes are not relabeled as verification of its subsequent footer correction.
+
+## Final Linux production repeat
+
+Run `43712421975` passes all 22 windows and the full 180-second soak on both Linux
+architectures with production JAR `88283267…5bc1`, including the footer correction
+and original game/audio initialization order. Each downloaded package's embedded
+JAR was independently hashed. All 56 audit frames were inspected, including the
+complete idle-menu pairs, movement/jump/retry, all regions, monsters, guardians
+and soak; no new visual defect was found. Menu text was also checked at its
+original resolution. Both title/pause pairs remain pixel-identical.
+
+| Runner | Soak frames/s | Mean paint | Process CPU, one core | Retained heap before / after |
+| --- | --- | --- | --- | --- |
+| Linux x86-64 | 62.149 | 1.663 ms | 9.222% | 20,779,296 / 20,529,368 bytes |
+| Linux ARM64 | 62.155 | 1.915 ms | 11.527% | 20,093,816 / 20,344,936 bytes |
+
+The slowest active windows were 61.960 and 61.956 frames/s; the highest mean
+paint costs were 1.782 and 2.151 ms. Both retain the 128 MiB maximum heap,
+two visible processors and 1152×648 content area. As in the prior CI run, these
+performance hosts had no audio output line, and process RSS was not recorded.
+Separate final x86-64 source/bundle PCM at the same hash passes all 28 physical
+sound-control cases, as documented in `AUDIO.md`; that evidence does not silently
+extend to ARM64. The private virtual-output CI is intended to close that gap.
+
+Evidence: `build/ci-final-8828-linux-{x64,arm64}/build/performance/independent-review/`,
+including metric checks, exact frame hashes and the visual journal.

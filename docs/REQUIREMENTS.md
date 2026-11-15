@@ -13,6 +13,13 @@ play; adversarial reviews and repeated actual playtesting; external evidence of
 every physical command (including alternate keys), focus/release and audio;
 low-resource profiling; Git tracking/public GitHub; Linux and macOS distribution.
 
+These requirements incorporate the user's transferable guidance from the related
+Turbo Tides, memory-game and TUI sessions: observe literal left/right behavior and
+every command, complete the mechanics and physics, repeat adversarial testing,
+use current JVM/Kotlin/Gradle versions, and provide simple fresh/offline onboarding
+with dependency setup, a readable README, and a visible launcher/icon. TUI-specific
+ANSI interfaces and unrelated game content are outside this port's scope.
+
 Mandatory control coverage is recorded in CONTROLS.md and generated native audit
 artifacts. Simulation victories are supplementary. A successful build does not
 prove platform launch, native input, audio or performance. Do not mark absent
@@ -26,11 +33,11 @@ Current assessment (final platform verification remains open):
 | --- | --- |
 | Core loop | Both simulation and normal-rate native input complete all 20 levels, all six guardians and 60 acorns. The exact d5499672 native repeat ends at 08:19 with one actual fall/retry, 201/378 gems and all 20 fireflies; Java and wrapper both exit 0. The earlier ce6 run remains historical evidence. |
 | Physics | Automated regressions cover jump/dash limits, collision sweeps, rising-platform carry, crumble/recovery, mushrooms and boss caps. Full native traversal supplements these; final platform control reruns remain open. |
-| Interaction | Every binding/state is inventoried. The d549 Linux source/bundled inventories passed all 280 rows with rendered and audio proof. The final unavailable-audio status fix is undergoing another complete inventory run. |
+| Interaction | Every binding/state is inventoried. Final 88283267 Linux x64 source/bundled inventories pass all 280 rows with every rendered frame reviewed and 14 actual audio cases per runtime. ARM output/physical-close evidence and the complete native Mac inventory remain open. |
 | Navigation/camera | Original routes and menu choices are preserved. Ordinary/Gentle camera direction was visually reviewed; final platform rows remain open. |
 | State | Reset, pause, checkpoint treasure, boss defeat persistence and settings are covered by tests and native fixtures. Blocked audio initialization/shutdown has regression tests; d549 Linux native campaign exits cleanly and its installed app closes through physical Alt+F4. Mac shutdown remains unverified. |
 | Feel/accessibility | Original art/fonts, keyboard focus, alternate keys, sound and Gentle motion remain. Footer overlap and unavailable-audio status are corrected and inspected; final Mac output-device and modal-free onboarding checks remain open. |
-| Polish | Original resources are byte-verified. All regions, guardians, monsters and equipment were visually reviewed. The native twenty-level ending was inspected; final platform control evidence still needs consolidation. |
+| Polish | Original resources are byte-verified. All regions, guardians, monsters and equipment were visually reviewed. The native twenty-level ending and every final Linux control frame on both architectures were inspected; Mac control review remains open. |
 | Robustness/performance | Both dedicated Linux architectures passed the prior full matrix. Mac timer pacing and Intel output initialization are under investigation; these are not counted as passes. Fresh/offline/install/upgrade/removal and Zed loading were exercised. |
 | Scope exclusions | Controller/touch, networking, accounts, camera switches and new easter eggs are not implemented in this parity port. The original hidden fireflies remain. |
 

@@ -10,10 +10,12 @@ import array
 import json
 import math
 import select
+import signal
 import subprocess
 import tempfile
 import time
 import wave
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -63,10 +65,41 @@ def ports(pid=None, name=None, direction="out"):
     ]
 
 
+@lru_cache(maxsize=1)
+def recorder_has_sample_limit():
+    return "--sample-count" in subprocess.check_output(
+        ["pw-record", "--help"], text=True, timeout=5
+    )
+
+
+def extract_pcm_window(original, destination):
+    """Keep the complete capture and select its first exact two-second window."""
+    destination.unlink(missing_ok=True)
+    with wave.open(str(original), "rb") as source:
+        assert (
+            source.getframerate(),
+            source.getnchannels(),
+            source.getsampwidth(),
+        ) == (48000, 1, 2)
+        frames = source.getnframes()
+        assert frames >= 96000, (
+            f"Only {frames} frames captured; the two-second window is incomplete"
+        )
+        pcm = source.readframes(96000)
+        assert len(pcm) == 192000, "Captured PCM is truncated"
+    with wave.open(str(destination), "wb") as target:
+        target.setparams((1, 2, 48000, 0, "NONE", "not compressed"))
+        target.writeframes(pcm)
+    return frames
+
+
 def record(source, output, label, action):
     """Link only the identified game's playback port, then capture the action."""
     capture_name = f"EmberwoodAudit-{source}-{time.monotonic_ns()}"
     path = output / f"{label}.wav"
+    path.unlink(missing_ok=True)
+    limited = recorder_has_sample_limit()
+    captured = path if limited else output / f"{label}.capture.wav"
     recording = subprocess.Popen(
         [
             "pw-record",
@@ -80,9 +113,8 @@ def record(source, output, label, action):
             "1",
             "--format",
             "s16",
-            "--sample-count",
-            "96000",
-            str(path),
+            *(["--sample-count", "96000"] if limited else []),
+            str(captured),
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -96,16 +128,29 @@ def record(source, output, label, action):
             time.sleep(0.025)
         assert target, "Isolated recording port did not appear"
         subprocess.run(["pw-link", str(source), str(target[0])], check=True)
+        linked = time.monotonic()
         time.sleep(0.1)
         action()
+        if not limited:
+            # Ubuntu 24.04's PipeWire 1.0 has no --sample-count. Preserve its full
+            # WAV, then select the same first 96000 frames without editing samples.
+            time.sleep(max(0, linked + 2.2 - time.monotonic()))
+            recording.send_signal(signal.SIGINT)
         _, stderr = recording.communicate(timeout=6)
         # PipeWire 1.6.2 exits 1 on its sample limit without a playback drain.
         # Accept that completion only with a complete PCM file and no error text.
         diagnostic = stderr.decode(errors="replace").strip()
-        assert recording.returncode in (0, 1) and diagnostic in ("", str(path)), (
+        assert recording.returncode in (0, 1) and diagnostic in ("", str(captured)), (
             diagnostic
         )
-        return read_pcm(path, recording.returncode)
+        capture_frames = 96000 if limited else extract_pcm_window(captured, path)
+        result = read_pcm(path, recording.returncode)
+        result["capture"] = {
+            "method": "sample-count" if limited else "complete WAV, first 96000 frames",
+            "original_file": captured.name,
+            "original_frames": capture_frames,
+        }
+        return result
     finally:
         if recording.poll() is None:
             recording.terminate()

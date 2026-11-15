@@ -1,13 +1,14 @@
 # Desktop playback
 
 Emberwood synthesizes its existing cues as 22050 Hz, mono, signed 16-bit
-little-endian PCM. Linux uses Java Sound. The macOS backend under verification
-uses Apple's AudioToolbox output queue directly, without constructing a Java
+little-endian PCM. Linux uses Java Sound. The macOS backend uses Apple's
+AudioToolbox output queue directly, without constructing a Java
 Sound mixer or enumerating input devices. The native default output is left to
 AudioToolbox; the game does not change device selection or microphone permissions.
 The failed Intel named-mixer experiment remains recorded in PERFORMANCE.md and
-its artifacts. Native evidence for the replacement is recorded below; the Intel
-GUI startup issue remains unresolved.
+its artifacts. Both architectures now have prompt-free native-app startup and
+all fourteen physical sound-control cases verified under the shared Hardened
+Runtime signing policy. Audio continuity remains a separate investigation below.
 
 The queue owns eight 512-byte buffers, at most 4096 bytes of application-managed
 PCM storage. Startup primes them with silence, starts playback, and confirms
@@ -99,8 +100,8 @@ control cases, with no interior exact-zero span of at least 2 ms in any of its
 cause. Its capture timestamp discontinuities occur after the affected short cues
 have ended, and are recorded separately under `build/ci-contexts-macos-arm/`.
 
-On Intel, the standalone queue probes pass, but the actual game window still
-produces a microphone permission dialog and audio initialization remains pending.
+On Intel, the earlier standalone queue probes passed, but the native game window
+produced a microphone permission dialog and audio initialization remained pending.
 No permission was granted and the input guard sends no keys in this state.
 Run `43707637231` then isolated an empty window, the audio worker, ordered
 window/audio startup, and the concurrent production window. All four raw-JVM
@@ -110,4 +111,88 @@ Audio's device stream-usage registration. Those later fixtures may be affected
 by incomplete cleanup of the native app's pending request. Own-app stacks,
 strict cleanup, and launcher/signing comparisons are the next checks; AWT ordering
 is not established as the cause. Evidence is retained under
-`build/ci-contexts-macos-intel/mac-output-diagnostic/`. The Intel game is not verified.
+`build/ci-contexts-macos-intel/mac-output-diagnostic/`. These older failures are
+retained; they are not relabeled as passes after the signing correction.
+
+The subsequent hardened native-app trial `43712978391`, at production JAR
+`88283267…5bc1`, passed all fourteen physical audio cases on both ARM64 and
+Intel. The app launches through LaunchServices with unchanged game/runtime
+bytes; only the outer launcher signing policy changes. Independent recomputation
+of all 168 recordings confirms audible reference/restored cues, a nonzero
+prefix followed by silence when muting a playing cue, completely silent muted
+output, and the 880/1175 Hz unmute feedback within 2 Hz. All four overview
+waveform sheets and three enlarged Intel gap comparisons were inspected.
+Startup stacks show the audio worker writing or waiting for free output buffers,
+rather than blocked in `AudioQueueStart`. No microphone permission was granted.
+The exact two JIT/library allowances are documented in `MAC_SIGNING_TRIAL.md`;
+the production builder now applies that same verified policy.
+
+There are four interior zero spans of 16.52–24.06 ms in three Intel recordings:
+`CHAPTER_COMPLETE-full`, `CHAPTER_COMPLETE-cut`, and `WON-long`. Capture
+timestamps remain continuous at those intervals. After the second gem gap and
+the long cue gap, pitch, phase and envelope agree with the continuously advancing
+intact reference; cue duration does not grow. This is evidence of missing output
+within the ongoing cue timeline, not evidence establishing whether the device,
+output path or capture omitted it. ARM has no interior zero span of at least
+2 ms in this trial. Separate capture timestamp discrepancies are retained for
+both architectures, including three ARM long-cue windows. Functional mute proof
+does not imply flawless audio continuity. The final native-app repeat retains
+diagnostic timing evidence; no speculative buffer change is made.
+
+Evidence: `build/ci-hardened-pcm-macos-{arm,intel}/mac-entitlement-trial/native-pcm/`,
+including `independent-pcm-review.json`, original WAV/timestamp receipts and
+Intel `independent-gap-comparison.json`.
+
+The final Linux x86-64 source and bundled-runtime repeat at the same `88283267`
+JAR also passed all fourteen physical cases each. All 168 WAVs were measured;
+six waveform sheets were inspected and restored feedback independently measured
+at 880/1175 Hz within 2 Hz. Hash-qualified evidence is in
+`build/audio-states-{source,packaged}-88283267/REVIEW.md` and `root-review.json`.
+The ordinary Linux CI runners have no output device; a separate private virtual
+PipeWire session establishes output coverage without
+capturing microphones or changing the user's live audio configuration.
+
+## Isolated Linux output verification
+
+After building the test classes and Linux package, run
+`python3 tools/linux_audio_ci.py --java-home "$JAVA_HOME"`. The manual
+`linux-audio.yml` workflow runs this on both Linux architectures. It needs Xvfb,
+Openbox, Python Xlib and Pillow, PipeWire with its ALSA plugin, WirePlumber and DBus.
+All sound sockets, ALSA configuration and state live in a temporary private
+directory. The private server contains one virtual output and no hardware/input
+devices; WirePlumber runs its policy-only profile, and the private DBus cannot
+activate external services. Every owned process is stopped and the private
+directory removed afterward, including failed audits.
+
+The existing sound-control audit uses real X11 keys/mouse and links the recorder
+only to the launched game's playback port. Its fourteen cases and numerical
+assertions are unchanged. Newer `pw-record` stops at exactly 96,000 frames;
+PipeWire 1.0 lacks that option, so the fallback retains a complete longer
+`*.capture.wav` and analyzes its first 96,000 frames without changing samples.
+Incomplete captures fail. This verifies actual application PCM through the
+Linux audio stack into a virtual output, rather than speaker hardware playback.
+It never captures a microphone or the user's system mix.
+
+Each route also launches the real game, separately from the state fixture, and
+uses physical input to start, move right, release, jump, land, pause and close
+with Alt+F4. The helper binds input to the exact owned window and checks both
+process exit and the empty desktop. Screenshots remain explicitly unreviewed
+until a person or visual reviewer inspects them; the CI artifact retains every
+frame. The workflow validates and retains the rebuilt distribution archives and
+checksums alongside the PCM evidence.
+
+The policy-only configurations follow the upstream
+[WirePlumber 0.4 policy context](https://github.com/PipeWire/wireplumber/blob/0.4.17/src/config/policy.conf)
+and [PipeWire ALSA client interface](https://github.com/PipeWire/pipewire/blob/master/pipewire-alsa/alsa-plugins/pcm_pipewire.c).
+The source/bundle local x86-64 runs passed all 28 physical cases with both recorder
+protocols, under `build/audio-linux-private-portable/` and
+`build/audio-linux-private-final/`. The compatibility run uses the installed
+recorder with its sample-count capability hidden; it is not a claim that a local
+PipeWire 1.0 installation was tested. All 336 analyzed WAVs were independently
+recomputed and their eight waveform sheets inspected. Every retained longer
+capture has an identical first 96,000 samples. The modern source run contains one
+10.667 ms zero interval at a mute cutoff, followed by about 1.4 ms of residual
+tail and then silence; reference and restored cues have no interior zero span of
+at least 2 ms. This observation is retained separately from the fourteen passing
+control assertions and the earlier Mac mid-cue gaps. Private-session normal and
+forced-failure cleanup were exercised. The dedicated ARM64 repeat remains pending.

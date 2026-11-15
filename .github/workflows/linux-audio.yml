@@ -1,0 +1,53 @@
+name: Verify isolated Linux audio output
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audio:
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Install isolated display and output-test facilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth openbox x11-utils desktop-file-utils pipewire pipewire-bin pipewire-alsa wireplumber dbus-daemon libasound2t64
+          python3 -m pip install 'python-xlib==0.33' 'Pillow==12.1.1' 'ruff==0.17.5' 'shellcheck-py==0.11.0.1'
+      - name: Prepare pinned private Java
+        shell: bash
+        run: |
+          java_home=$(tools/bootstrap.sh)
+          printf 'JAVA_HOME=%s\n' "$java_home" >> "$GITHUB_ENV"
+      - name: Check tools and build exact source and bundled runtime
+        run: |
+          ruff check tools
+          ruff format --check tools
+          shellcheck -x emberwood-kotlin tools/*.sh
+          python3 -m unittest discover -s tools -p 'test_*.py' -v
+          ./gradlew --no-daemon check fatJar
+          python3 tools/package_app.py --skip-build
+          for package in dist/emberwood-kotlin-*/; do
+            python3 tools/test_package.py "$package"
+          done
+      - name: Capture only each game's output in a private virtual audio session
+        run: python3 tools/linux_audio_ci.py
+      - name: Retain original PCM, assertions and private-session receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: emberwood-audio-${{ matrix.os }}
+          path: |
+            build/audio-linux/
+            build/reports/tests/
+            dist/*.deb
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: warn

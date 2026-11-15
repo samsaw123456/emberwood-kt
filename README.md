@@ -76,7 +76,8 @@ offline app and registers it for your user. Linux control tests use
 `./gradlew nativeAudit` in a real desktop session or Xvfb. On macOS, run
 `python3 tools/mac_app_profile.py --audit controls` after packaging to test the
 actual native app. See
-[packaging and verification](docs/PACKAGING.md) for details and platform limits.
+[packaging and verification](https://github.com/samsaw123456/emberwood-kt/blob/main/docs/PACKAGING.md)
+for details and platform limits.
 
 Code is Apache-2.0. Imported art keeps its original licenses;
 [THIRD_PARTY.md](THIRD_PARTY.md) lists attribution and provenance.
