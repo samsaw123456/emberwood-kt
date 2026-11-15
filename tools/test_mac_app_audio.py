@@ -75,7 +75,7 @@ class NativeAudioDriverTests(unittest.TestCase):
                 self.subTest(tamper=tamper),
                 tempfile.TemporaryDirectory() as directory,
             ):
-                root = Path(directory)
+                root = Path(directory).resolve()
                 (root / "VERSION").write_text("0.1.0\n")
                 app = root / "source cache/Emberwood Kotlin.app"
                 library = app / "Contents/app"
