@@ -94,10 +94,11 @@ data class MenuAction(
 
 class GamePanel(
     val settings: Settings,
-    val audio: Audio = Audio(),
+    audioOverride: Audio? = null,
 ) : JPanel(),
     AutoCloseable {
     val game = Game()
+    val audio = audioOverride ?: Audio()
     private val soundStatus
         get() =
             when {
