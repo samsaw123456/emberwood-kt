@@ -3,6 +3,13 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: Platforms whose native startup is ready for complete verification
+        type: choice
+        required: true
+        default: all
+        options: [all, linux, macos]
 permissions:
   contents: read
 jobs:
@@ -11,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15]
+        os: ${{ fromJSON(inputs.platforms == 'linux' && '["ubuntu-24.04","ubuntu-24.04-arm"]' || inputs.platforms == 'macos' && '["macos-15-intel","macos-15"]' || '["ubuntu-24.04","ubuntu-24.04-arm","macos-15-intel","macos-15"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -114,6 +121,7 @@ jobs:
 
   campaign:
     name: Play all twenty levels through native input
+    if: ${{ inputs.platforms != 'macos' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
