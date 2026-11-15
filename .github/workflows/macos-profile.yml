@@ -24,7 +24,7 @@ on:
         type: choice
         required: true
         default: performance
-        options: [performance, controls]
+        options: [performance, controls, compare-launchers]
 permissions:
   contents: read
 jobs:
@@ -56,8 +56,13 @@ jobs:
           AUDIT_KIND: ${{ inputs.audit }}
         run: |
           case "$SOAK_SECONDS" in 30|180) ;; *) exit 2 ;; esac
-          case "$AUDIT_KIND" in performance|controls) ;; *) exit 2 ;; esac
-          python3 tools/mac_app_profile.py --audit "$AUDIT_KIND" --soak-seconds "$SOAK_SECONDS"
+          case "$AUDIT_KIND" in
+            performance|controls)
+              python3 tools/mac_app_profile.py --audit "$AUDIT_KIND" --soak-seconds "$SOAK_SECONDS" ;;
+            compare-launchers)
+              python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds "$SOAK_SECONDS" ;;
+            *) exit 2 ;;
+          esac
       - name: Retain native application measurements
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -66,5 +71,6 @@ jobs:
           path: |
             build/performance-native-app/
             build/controls-native-app/
+            build/performance-launcher-comparison/
             build/reports/tests/
           if-no-files-found: warn
