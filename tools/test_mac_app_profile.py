@@ -52,6 +52,10 @@ class NativeAppConfigTests(unittest.TestCase):
                     self.assertIn("java-options=-Xmx128m\n", configured)
                     self.assertIn("-Dperformance.soakSeconds=180\n", configured)
                     self.assertIn("-XX:ActiveProcessorCount=2\n", configured)
+                    self.assertIn(
+                        "java-options=-Xlog:gc,safepoint:stderr:time,uptime,level,tags\n",
+                        configured,
+                    )
                 else:
                     self.assertIn("java-options=-Xmx256m\n", configured)
                     self.assertEqual(

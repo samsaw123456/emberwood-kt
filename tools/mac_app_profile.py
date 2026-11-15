@@ -50,6 +50,7 @@ def configure_app(
         options.extend(
             [
                 "-XX:ActiveProcessorCount=2",
+                "-Xlog:gc,safepoint:stderr:time,uptime,level,tags",
                 f"-Dperformance.output={output}",
                 f"-Dperformance.soakSeconds={seconds}",
             ]

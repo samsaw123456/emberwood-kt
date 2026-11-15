@@ -27,6 +27,8 @@ object PerformanceAudit {
 
     private data class Snapshot(
         val wallNanos: Long,
+        val epochMillis: Long,
+        val clockReadNanos: Long,
         val cpuNanos: Long,
         val frames: Long,
         val paintNanos: Long,
@@ -54,6 +56,9 @@ object PerformanceAudit {
         private val coreTimings = mutableListOf<String>()
         private val corePositions = mutableListOf<String>()
         private val focusObservations = mutableListOf<String>()
+
+        // Reuse existing quarter-second samples; format and write only after measurement stops.
+        private val intervalSamples = mutableListOf<Triple<String, String, Snapshot>>()
         private lateinit var window: JFrame
         private lateinit var panel: GamePanel
 
@@ -184,6 +189,30 @@ object PerformanceAudit {
         }
 
         private fun writeMeasurements() {
+            Files.newBufferedWriter(output.resolve("interval-samples.tsv")).use { writer ->
+                writer.appendLine(
+                    "Scene\tPhase\tMonotonic ns\tEpoch ms\tClock read span ns\tProcess CPU ns\t" +
+                        "Painted frames\tPaint ns\tSimulation seconds\tHeap bytes\tShots\tParticles",
+                )
+                for ((scene, phase, sample) in intervalSamples) {
+                    writer.appendLine(
+                        listOf(
+                            scene,
+                            phase,
+                            sample.wallNanos,
+                            sample.epochMillis,
+                            sample.clockReadNanos,
+                            sample.cpuNanos,
+                            sample.frames,
+                            sample.paintNanos,
+                            sample.elapsed,
+                            sample.heapBytes,
+                            sample.shots,
+                            sample.particles,
+                        ).joinToString("\t"),
+                    )
+                }
+            }
             Files.writeString(
                 output.resolve("measurements.tsv"),
                 "Scene\tMethod\tWall seconds\tSimulation seconds\tProcess CPU percent\tPainted frames/s\t" +
@@ -359,6 +388,7 @@ object PerformanceAudit {
             val previousFailures = failures.size
             observeFocus(name, "before")
             val before = snapshot()
+            intervalSamples.add(Triple(name, "before", before))
             var peakHeap = before.heapBytes
             var peakShots = before.shots
             var peakParticles = before.particles
@@ -369,6 +399,7 @@ object PerformanceAudit {
                 input(elapsed)
                 if (elapsed >= pollAt) {
                     val current = snapshot()
+                    intervalSamples.add(Triple(name, "sample", current))
                     peakHeap = max(peakHeap, current.heapBytes)
                     peakShots = max(peakShots, current.shots)
                     peakParticles = max(peakParticles, current.particles)
@@ -378,6 +409,7 @@ object PerformanceAudit {
             }
             releaseKeys()
             val after = snapshot()
+            intervalSamples.add(Triple(name, "after", after))
             observeFocus(name, "after")
             val wall = (after.wallNanos - before.wallNanos) / 1e9
             val simulation = after.elapsed - before.elapsed
@@ -425,8 +457,13 @@ object PerformanceAudit {
 
         private fun snapshot(): Snapshot =
             edt {
+                val monotonicNanos = System.nanoTime()
+                val epochMillis = System.currentTimeMillis()
+                val clockReadNanos = System.nanoTime() - monotonicNanos
                 Snapshot(
-                    System.nanoTime(),
+                    monotonicNanos,
+                    epochMillis,
+                    clockReadNanos,
                     process
                         .info()
                         .totalCpuDuration()
