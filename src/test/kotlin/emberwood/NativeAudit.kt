@@ -40,6 +40,8 @@ private class NativeAudit(
     )
 
     private val deliveries = ConcurrentHashMap<Triple<Int, Int, Boolean>, Delivery>()
+    private var wheelEvents = 0
+    private var lastWheelRotation = 0
     private val inputTimings = mutableListOf<String>()
     private var currentCase = "startup"
     private val selectedCases = System.getProperty("audit.filter")?.let(::Regex)
@@ -82,6 +84,10 @@ private class NativeAudit(
                         override fun keyReleased(event: KeyEvent) = delivered(event, false)
                     },
                 )
+                panel.addMouseWheelListener { event ->
+                    wheelEvents++
+                    lastWheelRotation = event.wheelRotation
+                }
             }
             robot.delay(700)
             directionCases()
@@ -380,7 +386,13 @@ private class NativeAudit(
             expected[binding] = (expected[binding] ?: deliveries[binding]?.count ?: 0) + 1
         }
         val started = System.nanoTime()
-        check(ProcessBuilder(command).inheritIO().start().waitFor() == 0) { "Native physical key injection failed" }
+        // A failed acknowledgement may still follow a delivered native press. Remember attempted
+        // downs before running the helper so case recovery releases them instead of contaminating
+        // later cases with an OS modifier that the test forgot to release.
+        for ((key, down) in events) if (down) nativeKeys.add(key)
+        val process = ProcessBuilder(command).inheritIO()
+        if (macOS) process.environment()["EMBERWOOD_PHYSICAL_TRACE"] = output.resolve("physical-os-state.jsonl").toAbsolutePath().toString()
+        check(process.start().waitFor() == 0) { "Native physical key injection failed" }
         for ((key, down) in aggregateOnly) {
             inputTimings.add("$currentCase\t$key\tOS\t$down (AWT aggregate unchanged)\t${(System.nanoTime() - started) / 1e6}")
         }
@@ -952,7 +964,7 @@ private class NativeAudit(
                 case(
                     "$key / ${item.name}",
                     GameState.PAUSED,
-                    "Keyboard selection visibly toggles this item; a second activation restores its previous selection",
+                    "Keyboard selection visibly toggles this item; a second activation toggles it off (or back on if initially selected)",
                     true,
                 ) {
                     reveal(item.id)
@@ -1234,10 +1246,21 @@ private class NativeAudit(
                 ) {
                     if (state == GameState.PAUSED && rotation < 0) repeat(3) { click("armor-down") }
                     val ids = edt { panel.actions.map { it.id } }
-                    val p = edt { panel.locationOnScreen }
-                    robot.mouseMove(p.x + 850, p.y + 340)
-                    robot.mouseWheel(rotation)
-                    robot.delay(120)
+                    val point =
+                        edt {
+                            val p = panel.locationOnScreen
+                            java.awt.Point(p.x + panel.width * 3 / 4, p.y + panel.height / 2)
+                        }
+                    robot.mouseMove(point.x, point.y)
+                    val beforeWheel = edt { wheelEvents }
+                    val started = System.nanoTime()
+                    // CRobot.m sends its argument directly as Quartz delta, whose positive sign
+                    // means up; CPlatformResponder negates it for Java's down-positive rotation.
+                    robot.mouseWheel(if (macOS) -rotation else rotation)
+                    await("Native wheel event") { edt { wheelEvents > beforeWheel } }
+                    val actualRotation = edt { lastWheelRotation }
+                    check(actualRotation * rotation > 0) { "Wheel direction: requested $rotation, delivered $actualRotation" }
+                    inputTimings.add("$currentCase\tmouse-wheel\tOS\t$actualRotation\t${(System.nanoTime() - started) / 1e6}")
                     check(edt { panel.game.state == state })
                     if (state == GameState.PAUSED) {
                         check(edt { panel.actions.any { it.id == if (rotation < 0) "armor" else "sunleaf_armor" } })

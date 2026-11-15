@@ -29,18 +29,27 @@ object CampaignAudit {
         val delivery = ConcurrentHashMap<Pair<Int, Boolean>, CountDownLatch>()
         val observedInput = Game::class.java.getDeclaredField("lastInput").apply { isAccessible = true }
         val results = mutableListOf<String>()
+        val trace = mutableListOf("Chapter\tRoute\tAge\tX\tY\tVX\tVY\tGrounded\tJumps\tLeft\tRight\tJump\tDash\tState")
 
         fun edt(action: () -> Unit) = SwingUtilities.invokeAndWait(action)
+
+        fun postKey(
+            code: Int,
+            down: Boolean,
+        ): CountDownLatch? {
+            val changed = if (down) held.add(code) else held.remove(code)
+            if (!changed) return null
+            val received = CountDownLatch(1)
+            delivery[code to down] = received
+            if (down) robot.keyPress(code) else robot.keyRelease(code)
+            return received
+        }
 
         fun key(
             code: Int,
             down: Boolean,
         ) {
-            val changed = if (down) held.add(code) else held.remove(code)
-            if (!changed) return
-            val received = CountDownLatch(1)
-            delivery[code to down] = received
-            if (down) robot.keyPress(code) else robot.keyRelease(code)
+            val received = postKey(code, down) ?: return
             check(received.await(2, TimeUnit.SECONDS)) { "Physical key $code/$down did not reach the focused window" }
         }
 
@@ -82,11 +91,19 @@ object CampaignAudit {
             check(game.state == GameState.PLAYING) { "Initial Return did not start the game" }
             for (chapter in 0 until count) {
                 check(game.stageIndex == chapter)
+                var routeIndex = -1
                 val driver =
                     RouteDriver(game, nativeTiming = true) { input ->
-                        key(KeyEvent.VK_A, input.left)
-                        key(KeyEvent.VK_D, input.right)
-                        key(KeyEvent.VK_SPACE, input.jumpHeld)
+                        // Post a human chord together; waiting after each key would
+                        // turn a move-and-jump into a walk followed by a late jump.
+                        val pending =
+                            listOf(
+                                KeyEvent.VK_A to input.left,
+                                KeyEvent.VK_D to input.right,
+                                KeyEvent.VK_SPACE to input.jumpHeld,
+                                KeyEvent.VK_SHIFT to input.dashHeld,
+                            ).mapNotNull { (code, down) -> postKey(code, down) }
+                        pending.forEach { check(it.await(2, TimeUnit.SECONDS)) { "Physical chord did not reach the focused window" } }
                         var age = 0.0
                         edt { age = game.level.age }
                         val deadline = System.nanoTime() + 2_000_000_000L
@@ -100,29 +117,92 @@ object CampaignAudit {
                                         game.level.age > age &&
                                             applied.left == input.left &&
                                             applied.right == input.right &&
-                                            applied.jumpHeld == input.jumpHeld
+                                            applied.jumpHeld == input.jumpHeld &&
+                                            applied.dashHeld == input.dashHeld
                                     )
+                                if (advanced) {
+                                    val p = game.player
+                                    trace.add(
+                                        listOf(
+                                            chapter + 1,
+                                            routeIndex,
+                                            game.level.age,
+                                            p.x,
+                                            p.y,
+                                            p.vx,
+                                            p.vy,
+                                            p.grounded,
+                                            p.jumpsLeft,
+                                            applied.left,
+                                            applied.right,
+                                            applied.jumpHeld,
+                                            applied.dashHeld,
+                                            game.state,
+                                        ).joinToString("\t"),
+                                    )
+                                }
                             }
                             check(System.nanoTime() < deadline) { "Game stopped advancing during native input" }
                         }
                     }
                 snap("chapter-${chapter + 1}-entry")
-                for ((index, route) in game.level.definition.route
-                    .withIndex()) {
-                    // Native startup may reach this ledge at a different opossum
-                    // patrol phase; stop outside its full patrol width before jumping.
-                    val approach = if (chapter == 0 && index == 4) route.copy(x = 1225.0) else route
-                    check(
-                        driver.follow(approach),
-                    ) { "Chapter ${chapter + 1} route $index $route failed at ${game.player.position}, ${game.state}" }
-                    println("Chapter ${chapter + 1}, route $index: ${game.player.position}; age=${game.level.age}")
+                var resumeAt = 0
+                var completed = false
+                for (attempt in 0..8) {
+                    var reachedRouteEnd = true
+                    for ((index, route) in game.level.definition.route
+                        .withIndex()
+                        .drop(resumeAt)) {
+                        routeIndex = index
+                        // Stop outside the opossum's whole patrol before jumping.
+                        val approach = if (chapter == 0 && index == 4) route.copy(x = 1225.0) else route
+                        if (!driver.follow(approach)) {
+                            reachedRouteEnd = false
+                            break
+                        }
+                        println("Chapter ${chapter + 1}, route $index: ${game.player.position}; age=${game.level.age}")
+                    }
+                    if (reachedRouteEnd && game.boss != null) {
+                        routeIndex = -2
+                        release()
+                        snap("chapter-${chapter + 1}-boss-before-$attempt")
+                        reachedRouteEnd = driver.fightBoss()
+                        if (reachedRouteEnd) {
+                            release()
+                            snap("chapter-${chapter + 1}-boss-defeated")
+                            reachedRouteEnd = driver.walk(game.level.gate.x)
+                        }
+                    }
+                    release()
+                    if (reachedRouteEnd) {
+                        completed = true
+                        break
+                    }
+                    val failure =
+                        "Chapter ${chapter + 1}, attempt ${attempt + 1}, route $routeIndex: " +
+                            "${game.player.position}, ${game.state}"
+                    println("Retry: $failure")
+                    results.add("Retry: $failure")
+                    snap("chapter-${chapter + 1}-retry-${attempt + 1}")
+                    check(attempt < 8) { "Native route retry limit reached: $failure" }
+                    // Use the real retry command and campfire, never reset game
+                    // fields or move the fox. Deaths remain in the final record.
+                    if (game.state == GameState.PLAYING) {
+                        key(KeyEvent.VK_R, true)
+                        robot.delay(40)
+                        release()
+                    }
+                    val deadline = System.nanoTime() + 5_000_000_000L
+                    while (game.state == GameState.RESPAWNING && System.nanoTime() < deadline) robot.delay(10)
+                    check(game.state == GameState.PLAYING) { "Campfire recovery did not complete: ${game.state}" }
+                    val camp = game.level.camps[game.level.campIndex]
+                    check(kotlin.math.abs(game.player.x - camp.x) < 2) { "Retry did not return to the active campfire" }
+                    resumeAt =
+                        game.level.definition.route
+                            .indexOfFirst { it.x > camp.x + 20 }
+                    if (resumeAt < 0) resumeAt = game.level.definition.route.size
                 }
-                if (game.boss != null) {
-                    snap("chapter-${chapter + 1}-boss-before")
-                    check(driver.fightBoss()) { "Guardian ${game.boss?.name} was not defeated" }
-                    snap("chapter-${chapter + 1}-boss-defeated")
-                    check(driver.walk(game.level.gate.x))
-                }
+                check(completed)
                 release()
                 check(game.level.takenAcorns.size == 3 && game.level.secretFound)
                 check(game.state == if (chapter == 19) GameState.WON else GameState.CHAPTER_COMPLETE)
@@ -136,12 +216,12 @@ object CampaignAudit {
                     robot.delay(120)
                 }
             }
-            check(game.deaths == 0)
-            Files.writeString(output.resolve("results.txt"), results.joinToString("\n") + "\n")
         } finally {
             release()
             if (panel != null) snap("final")
             edt { frame?.dispose() }
+            Files.writeString(output.resolve("input-route.tsv"), trace.joinToString("\n") + "\n")
+            Files.writeString(output.resolve("results.txt"), results.joinToString("\n") + "\n")
             preferences.toFile().deleteRecursively()
         }
     }

@@ -46,7 +46,7 @@ desktop mix. Java audio flags alone do not satisfy this check.
 - Bootstrap: **passed**. Empty-cache Java download, checksum, extraction and
   offline reuse were exercised without changing system Java.
 - Kotlin formatting: **passed**. The final source is formatted with ktlint.
-- Build, lint and automated tests: **passed**, 25 tests. The simulation campaign
+- Build, lint and automated tests: **passed**, 26 tests. The simulation campaign
   reaches all 20 levels, all 60 acorns and 20 hidden fireflies, all six guardians
   and all 13 equipment unlocks with zero retries. Optional gems collected by this
   route: 196 of 378. This is simulation evidence, not a physical-input playthrough.
@@ -59,6 +59,10 @@ desktop mix. Java audio flags alone do not satisfy this check.
 - Linux installation and native launcher: **passed** with invalid global Java
   and internet socket creation blocked. The separate application opens through
   the desktop registry and closes using physical Alt+F4. See PACKAGING.md.
+- Zed onboarding: **passed in Zed 1.28.1** with isolated editor data. The actual
+  task picker loads Play Emberwood Kotlin; selecting it launches the game. Return,
+  movement, jump, pause and window close were exercised in that launched window.
+  Screenshots are retained in `build/zed-audit/`.
 - Final native controls, physical campaign, performance and macOS installed
   execution: **pending final runs**. See PERFORMANCE.md for measurements and
   rejected experiments; no failed measurement is being labeled passed.
@@ -78,6 +82,21 @@ desktop mix. Java audio flags alone do not satisfy this check.
 - Static menus stop repainting continuously; victory particles continue until
   finished. State transitions discard paused wall time and stale input.
 - Failed settings writes remain visible without overlapping title instructions.
+- Trail section names now follow the nearest sign passed in world coordinates,
+  including backtracking. Original sign insertion order is not spatial order.
+- Zed rejected the unsupported `reveal: on_error` value and hid the Play task.
+  The task now uses supported reveal/hide settings, verified in the editor itself.
+- Paused and result menus drew gameplay instructions underneath their own footer.
+  The gameplay footer is now hidden in menus; results retain an explicit M/sound
+  hint. The rebuilt candidate is undergoing a fresh visual control audit.
+
+The current local candidate JAR is
+`82e43cb9b6ff80cf03bc581bdb58a9675de78d9fef8a5b49ddf8a27501efff37`.
+Separate `ktlintFormat`, then `check fatJar`, completed successfully with all
+26 tests. Original-resource verification and the six installer fixtures passed
+again. Native playthrough attempts use ordinary input and real campfire retries;
+every retry is retained in their results, and no state fixture or teleport counts
+as campaign progress.
 
 No finite audit proves the absence of all bugs. Platform facilities that have not
 been exercised remain explicitly unverified in the final coverage record.

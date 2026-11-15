@@ -51,6 +51,8 @@ object PerformanceAudit {
         private val failures = mutableListOf<String>()
         private val deliveries = ConcurrentHashMap<Pair<Int, Boolean>, Long>()
         private val coreTimings = mutableListOf<String>()
+        private val corePositions = mutableListOf<String>()
+        private val focusObservations = mutableListOf<String>()
         private lateinit var window: JFrame
         private lateinit var panel: GamePanel
 
@@ -149,6 +151,15 @@ object PerformanceAudit {
                     output.resolve("core-input-latency.tsv"),
                     "Action\tMilliseconds\tResult\n" + coreTimings.joinToString("\n") + "\n",
                 )
+                Files.writeString(
+                    output.resolve("window-focus.tsv"),
+                    "Scene\tPhase\tVisible\tActive\tWindow focused\tPanel focused\tResult\n" +
+                        focusObservations.joinToString("\n") + "\n",
+                )
+                Files.writeString(
+                    output.resolve("core-positions.tsv"),
+                    "Moment\tX\tY\tHorizontal speed\tGrounded\n" + corePositions.joinToString("\n") + "\n",
+                )
                 preferences.toFile().deleteRecursively()
             }
             check(failures.isEmpty()) { failures.joinToString("\n") }
@@ -158,11 +169,12 @@ object PerformanceAudit {
         private fun physicalCoreLoop() {
             coreTap(KeyEvent.VK_ENTER)
             robot.delay(150)
-            val start = edt { panel.game.player.x }
+            val start = corePosition("start")
             coreKeys(setOf(KeyEvent.VK_D))
             robot.delay(420)
             coreKeys(emptySet())
             screenshot("core-right")
+            corePosition("after D release")
             verify(edt { panel.game.player.x > start + 65 }, "Physical D input did not move right during core play")
             coreKeys(setOf(KeyEvent.VK_SPACE))
             robot.delay(130)
@@ -170,15 +182,17 @@ object PerformanceAudit {
             screenshot("core-jump")
             coreKeys(emptySet())
             awaitCore("Jump landing") { edt { panel.game.player.grounded } }
+            val leftStart = corePosition("before A press")
             coreKeys(setOf(KeyEvent.VK_A))
             robot.delay(420)
             coreKeys(emptySet())
             // Receipt and braking are separate: a delayed release cannot prove rest after a fixed sleep.
             awaitCore("A release braking") { edt { abs(panel.game.player.vx) < 0.01 } }
             screenshot("core-left-release")
+            corePosition("after A release and braking")
             verify(
                 edt {
-                    panel.game.player.x > 40 && panel.game.player.x < start + 25 && abs(panel.game.player.vx) < 0.01
+                    panel.game.player.x > 40 && panel.game.player.x < leftStart - 65 && abs(panel.game.player.vx) < 0.01
                 },
                 "Physical A/release did not recover to rest",
             )
@@ -192,6 +206,15 @@ object PerformanceAudit {
             screenshot("pause-before")
             verify(edt { panel.game.state == GameState.PAUSED }, "Physical Escape did not pause")
         }
+
+        private fun corePosition(moment: String): Double =
+            edt {
+                val player = panel.game.player
+                corePositions.add(
+                    listOf(moment, decimal(player.x), decimal(player.y), decimal(player.vx), player.grounded).joinToString("\t"),
+                )
+                player.x
+            }
 
         private fun delivered(
             event: KeyEvent,
@@ -278,6 +301,8 @@ object PerformanceAudit {
             active: Boolean = false,
             input: (Double) -> Unit = {},
         ) {
+            val previousFailures = failures.size
+            observeFocus(name, "before")
             val before = snapshot()
             var peakHeap = before.heapBytes
             var peakShots = before.shots
@@ -298,13 +323,13 @@ object PerformanceAudit {
             }
             releaseKeys()
             val after = snapshot()
+            observeFocus(name, "after")
             val wall = (after.wallNanos - before.wallNanos) / 1e9
             val simulation = after.elapsed - before.elapsed
             val frames = after.frames - before.frames
             val fps = frames / wall
             val paint = if (frames > 0) (after.paintNanos - before.paintNanos) / 1e6 / frames else 0.0
             val cpu = (after.cpuNanos - before.cpuNanos) / 1e9 / wall * 100
-            val previousFailures = failures.size
             if (active) {
                 verify(after.state == GameState.PLAYING, "$name did not remain in gameplay")
                 verify(fps >= 45, "$name rendered at ${decimal(fps)} frames/s, below 45")
@@ -331,6 +356,16 @@ object PerformanceAudit {
                 ).joinToString("\t"),
             )
             println("$name: $result; ${decimal(fps)} frames/s, ${decimal(paint)} ms paint, ${decimal(cpu)}% CPU, $peakHeap heap bytes")
+        }
+
+        private fun observeFocus(
+            scene: String,
+            phase: String,
+        ) {
+            val observed = edt { listOf(window.isShowing, window.isActive, window.isFocused, panel.isFocusOwner) }
+            val passed = observed.all { it }
+            focusObservations.add((listOf(scene, phase) + observed + if (passed) "PASS" else "FAIL").joinToString("\t"))
+            verify(passed, "$scene $phase measurement: game window must be visible, active and keyboard-focused: $observed")
         }
 
         private fun snapshot(): Snapshot =

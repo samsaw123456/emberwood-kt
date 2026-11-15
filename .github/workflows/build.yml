@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   native:
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +40,13 @@ jobs:
           for package in dist/emberwood-kotlin-*/; do
             python3 tools/test_package.py "$package"
           done
+      - name: Inspect macOS audio capture availability without recording
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
+        run: python3 tools/macos_audio_facility.py
+      - name: Check Mac modifier and wheel behavior before profiling
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
+        run: |
+          "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xms32m -Xmx256m -Daudit.output=build/audit-macos-targeted '-Daudit.filter=right-shift facing|after cooldown|Mouse wheel' -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.NativeAuditKt
       - name: Profile the low-resource configuration on Linux
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
         run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh "$JAVA_HOME/bin/java" -Xms32m -Xmx128m -XX:ActiveProcessorCount=2 --enable-native-access=ALL-UNNAMED -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.PerformanceAudit
@@ -47,9 +54,28 @@ jobs:
         id: mac_performance
         if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
         run: tools/run_mac_profile.sh build/performance
-      - name: Diagnose macOS presentation with Metal disabled
+      - name: Diagnose macOS scheduling with application resource policy
         if: ${{ !cancelled() && runner.os == 'macOS' && steps.mac_performance.outcome == 'failure' }}
-        run: tools/run_mac_profile.sh build/performance-metal-disabled -Dsun.java2d.metal=false -Dperformance.soakSeconds=30
+        run: /usr/bin/taskpolicy -a tools/run_mac_profile.sh build/performance-application-policy -Dperformance.soakSeconds=30
+      - name: Capture only the game's Mac audio and audit physical mute
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
+        run: python3 tools/mac_audio_audit.py
+      - name: Repeat Mac audio assertions with the packaged runtime
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
+        run: python3 tools/audit_package.py --audio
+      - name: Retain Mac diagnostics before the control audits
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: emberwood-diagnostics-${{ matrix.os }}
+          path: |
+            build/performance/
+            build/performance-application-policy/
+            build/audit-macos-targeted/
+            build/bundle-launch-macos/
+            build/audio-audit-macos/
+            build/audio-audit-macos-packaged/
+          if-no-files-found: warn
       - name: Audit controls through a real window on Linux
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
         run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh ./gradlew --no-daemon nativeAudit
@@ -74,11 +100,49 @@ jobs:
             build/audit/
             build/audit-packaged/
             build/bundle-launch-macos/
+            build/audio-audit-macos/
+            build/audio-audit-macos-packaged/
             build/performance/
-            build/performance-metal-disabled/
+            build/performance-application-policy/
+            build/audit-macos-targeted/
             build/reports/tests/
             dist/*.deb
             dist/*.tar.gz
             dist/*.zip
             dist/*.sha256
+          if-no-files-found: warn
+
+  campaign:
+    name: Play all twenty levels through native input
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Prepare the isolated Linux desktop
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth openbox x11-utils desktop-file-utils libasound2t64
+      - name: Prepare pinned private Java 25
+        shell: bash
+        run: |
+          java_home=$(tools/bootstrap.sh)
+          printf 'JAVA_HOME=%s\n' "$java_home" >> "$GITHUB_ENV"
+      - name: Check and build
+        shell: bash
+        run: |
+          mkdir -p build/campaign-native
+          ./gradlew --no-daemon check fatJar 2>&1 | tee build/campaign-native/build.log
+      - name: Play twenty levels at the normal simulation rate
+        shell: bash
+        run: |
+          xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh "$JAVA_HOME/bin/java" -Xms32m -Xmx256m --enable-native-access=ALL-UNNAMED -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.CampaignAudit 20 2>&1 | tee build/campaign-native/play.log
+      - name: Retain campaign evidence and test logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: emberwood-campaign-linux-x64
+          path: |
+            build/campaign-native/
+            build/reports/tests/
           if-no-files-found: warn

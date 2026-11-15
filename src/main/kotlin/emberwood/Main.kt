@@ -494,9 +494,7 @@ class GamePanel(
         text(g, "${game.stageIndex + 1}/20  ${game.level.title}", 24, 33, 22, true)
         text(
             g,
-            game.level.signs
-                .lastOrNull { it.position.x <= game.player.x }
-                ?.title ?: game.level.title,
+            game.level.sectionAt(game.player.x),
             24,
             67,
             15,
@@ -510,9 +508,11 @@ class GamePanel(
                 ?: if ("armor" in game.equipment.unlocked) "Armor: off" else "Armor: locked"
         text(g, "Dash: ${if (game.player.canDash) "ready" else "wait or land"}    J: $weapon    $armor", 420, 67, 15)
         band(g, 0, 588, 1152, 60)
-        text(g, "A/D or ←/→: move    Space / W / ↑: jump twice    Shift: dash    J: weapon", 24, 611, 16)
-        text(g, "R: retry    Esc / P: gear or pause    M: sound ${if (settings.muted) "off" else "on"}", 24, 637, 16)
-        text(g, if (game.player.jumpsLeft > 0) "Air jump ready" else "Land to jump again", 920, 611, 15)
+        if (game.state !in MENU_STATES) {
+            text(g, "A/D or ←/→: move    Space / W / ↑: jump twice    Shift: dash    J: weapon", 24, 611, 16)
+            text(g, "R: retry    Esc / P: gear or pause    M: sound ${if (settings.muted) "off" else "on"}", 24, 637, 16)
+            text(g, if (game.player.jumpsLeft > 0) "Air jump ready" else "Land to jump again", 920, 611, 15)
+        }
         game.boss?.takeIf { it.engaged && !it.defeated }?.let { boss ->
             band(g, 244, 98, 664, 76)
             text(
@@ -623,7 +623,13 @@ class GamePanel(
                 centered = true,
             )
         }
-        text(g, "Tab / Shift+Tab or ↑/↓: choose    Enter / Space: select", 576, 638, 14, centered = true)
+        val soundHint =
+            if (game.state == GameState.CHAPTER_COMPLETE || game.state == GameState.WON) {
+                "    M: sound ${if (settings.muted) "off" else "on"}"
+            } else {
+                ""
+            }
+        text(g, "Tab / Shift+Tab or ↑/↓: choose    Enter / Space: select$soundHint", 576, 638, 14, centered = true)
     }
 
     private fun drawButton(

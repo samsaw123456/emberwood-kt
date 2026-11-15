@@ -116,6 +116,39 @@ clearing and later buffer presentation. The low frame rates therefore require
 further scheduling/presentation diagnosis before macOS performance can pass.
 No frame-rate thresholds have been relaxed.
 
+The fourth ARM64 CI run reproduced the failure at 18.132 frames/second and
+4.504 ms mean painting during the full soak. Its Java Flight Recording identifies
+timer scheduling as the immediate bottleneck: 5,021 recorded `TimerQueue` parks
+requested a median 15.988 ms but lasted a median 59.791 ms (79.802 ms at the 95th
+percentile). The event thread spent 241.835 seconds waiting for its event queue
+during the 278-second recording, versus 0.265 seconds waiting for Metal flushes.
+All four periodic thread dumps place it in `EventQueue.getNextEvent`. Even the
+audit's requested 20 ms measurement sleeps lasted a median 69.137 ms.
+
+A separate 30-second Metal-disabled diagnostic did not solve this: its timer
+parks still lasted a median 55.703 ms for 15.988 ms requested, and mean paint costs
+rose to roughly 21–33 ms. This diagnostic is not a shipped setting. The recordings
+and screenshots are preserved under `build/ci-fourth-macos-arm/build/performance/`
+and `performance-metal-disabled/`. Reproduce the scheduling inspection with:
+
+```sh
+"$JAVA_HOME/bin/jfr" view thread-cpu-load path/to/pacing.jfr
+"$JAVA_HOME/bin/jfr" print --json \
+  --events jdk.ThreadPark,jdk.JavaMonitorWait,jdk.ThreadSleep path/to/pacing.jfr
+```
+
+These observations establish timer oversleep, but do not by themselves establish
+App Nap or the runner's process policy. Apple documents timer throttling as one
+effect of [App Nap](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/AppNap.html).
+The next diagnostic records native foreground/background-policy observations for
+only the launched Java PID, alongside `window-focus.tsv` assertions that each
+measurement begins and ends with a visible, active, keyboard-focused window.
+A separate `taskpolicy -a` run compares Apple's application resource policy;
+the [Apple command documentation](https://github.com/apple-oss-distributions/system_cmds/blob/main/taskpolicy/taskpolicy.8)
+describes that scope. The default full run and its failures remain authoritative.
+No global power setting, production rendering workaround or busy-spin loop is
+introduced to obtain a passing number.
+
 ## Native Linux CI measurements
 
 Both dedicated Linux architectures passed all 22 resource-measurement windows,
@@ -131,11 +164,29 @@ complete pass.
 | Linux ARM64 | 62.136 | 1.835 ms | 19,705,512 / 19,645,928 bytes |
 
 The core loop now records observed operating-system key receipt and separately
-waits for braking/landing/retry, all with bounded timeouts. Its position bound
-is retained and excludes the world wall, so hitting a boundary cannot masquerade
-as a successful release. The actual receipt and recovery timings are written to
-`core-input-latency.tsv`. A fresh native rerun is required to verify this audit
-correction; resource thresholds and the sustained input soak are unchanged.
+waits for braking/landing/retry, all with bounded timeouts. Actual receipt and
+recovery timings are written to `core-input-latency.tsv`. The fourth native run
+then passed the complete audit on both architectures, including all 22 windows
+and the physical core loop:
+
+| Native runner | Soak frames/s | Mean paint | Process CPU, one core | Retained heap before / after |
+| --- | --- | --- | --- | --- |
+| Linux x86-64 | 62.120 | 1.724 ms | 10.372% | 19,719,392 / 19,555,880 bytes |
+| Linux ARM64 | 62.172 | 1.912 ms | 11.117% | 19,635,256 / 19,586,800 bytes |
+
+Evidence is retained under `build/ci-fourth-linux-x64/build/performance/` and
+`build/ci-fourth-linux-arm/build/performance/`. These passes do not erase the
+previous failed run.
+
+The Mac timing investigation also exposed a separate audit assumption: equal
+requested left/right hold durations need not return to the same location when
+native sleeps overshoot. The core loop now requires each direction to travel
+more than 65 pixels from its own observed starting position, with left-release
+recovery additionally requiring zero horizontal velocity. It still excludes the
+world wall (`x > 40`), so reaching a
+boundary cannot masquerade as braking. `core-positions.tsv` retains the initial,
+right-release, pre-left and stopped positions. This further correction awaits
+the next native rerun; resource thresholds and sustained input are unchanged.
 
 Linux CI had no audio device; actual audio output is tested separately on the
 local PipeWire desktop. The native CI artifacts are under

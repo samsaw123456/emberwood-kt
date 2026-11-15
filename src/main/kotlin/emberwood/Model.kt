@@ -282,6 +282,14 @@ class LevelState(
     val mushrooms get() = definition.mushrooms
     val signs get() = definition.signs
 
+    // Exported signs retain their original insertion order, which is not spatial order.
+    fun sectionAt(x: Double): String =
+        signs
+            .asSequence()
+            .filter { it.position.x <= x }
+            .maxByOrNull { it.position.x }
+            ?.title ?: title
+
     fun resetHazards() {
         age = 0.0
         critters.forEach { it.out = false }

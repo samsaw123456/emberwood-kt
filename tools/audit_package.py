@@ -1,14 +1,23 @@
-"""Run the same physical-input audit with main classes loaded only from a packaged JAR/runtime."""
+"""Run control or native Mac audio checks using only the packaged game JAR/runtime."""
 
+import argparse
 import os
 import platform
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--audio",
+        action="store_true",
+        help="Run the native Mac PCM audit with the bundled runtime",
+    )
+    args = parser.parse_args()
     version = (ROOT / "VERSION").read_text().strip()
     system = platform.system()
     target = "macos" if system == "Darwin" else "linux"
@@ -31,6 +40,24 @@ def main():
         raise SystemExit(
             "Build test classes and the native package before auditing it."
         )
+    if args.audio:
+        if system != "Darwin":
+            parser.error("The bundled native PCM capture uses macOS ScreenCaptureKit.")
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools/mac_audio_audit.py"),
+                "--java",
+                str(java),
+                "--jar",
+                str(jar),
+                "--output",
+                str(ROOT / "build/audio-audit-macos-packaged"),
+            ],
+            cwd=ROOT,
+            check=True,
+        )
+        return
     output = ROOT / "build/audit-packaged"
     output.mkdir(parents=True, exist_ok=True)
     subprocess.run(

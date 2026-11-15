@@ -15,9 +15,6 @@ import time
 import wave
 from pathlib import Path
 
-from Xlib import XK, X, display, error
-from Xlib.ext import xtest
-
 
 def nodes():
     return json.loads(subprocess.check_output(["pw-dump"], text=True))
@@ -107,30 +104,36 @@ def record(source, output, label, action):
         assert recording.returncode in (0, 1) and diagnostic in ("", str(path)), (
             diagnostic
         )
-        with wave.open(str(path)) as stream:
-            assert (
-                stream.getframerate(),
-                stream.getnchannels(),
-                stream.getsampwidth(),
-            ) == (48000, 1, 2)
-            assert stream.getnframes() == 96000
-            samples = array.array("h", stream.readframes(96000))
-        energy = sum(s * s for s in samples)
-        active = [i for i, sample in enumerate(samples) if abs(sample) > 2]
-        return {
-            "rms": math.sqrt(energy / len(samples)),
-            "peak": max(map(abs, samples)),
-            "energy": energy,
-            "active_frames": len(active),
-            "first_active_frame": active[0] if active else None,
-            "last_active_frame": active[-1] if active else None,
-            "frames": len(samples),
-            "recorder_exit_code": recording.returncode,
-        }
+        return read_pcm(path, recording.returncode)
     finally:
         if recording.poll() is None:
             recording.terminate()
             recording.wait(timeout=5)
+
+
+def read_pcm(path, recorder_exit_code=0):
+    """Measure the same complete mono PCM window from either native capture path."""
+    with wave.open(str(path)) as stream:
+        assert (
+            stream.getframerate(),
+            stream.getnchannels(),
+            stream.getsampwidth(),
+        ) == (48000, 1, 2)
+        assert stream.getnframes() == 96000
+        samples = array.array("h", stream.readframes(96000))
+    energy = sum(s * s for s in samples)
+    active = [i for i, sample in enumerate(samples) if abs(sample) > 2]
+    return {
+        "rms": math.sqrt(energy / len(samples)),
+        "peak": max(map(abs, samples)),
+        "tail_peak": max(map(abs, samples[-24000:])),
+        "energy": energy,
+        "active_frames": len(active),
+        "first_active_frame": active[0] if active else None,
+        "last_active_frame": active[-1] if active else None,
+        "frames": len(samples),
+        "recorder_exit_code": recorder_exit_code,
+    }
 
 
 def read_fixture(app, log):
@@ -143,13 +146,29 @@ def read_fixture(app, log):
     return line
 
 
-def audit_states(app, log, key, source, output):
+def audit_states(
+    app,
+    log,
+    key,
+    source,
+    output,
+    record_audio=record,
+    method="fixture state and original gem/win cues; physical X11 keys/mouse",
+    click=None,
+):
     assert read_fixture(app, log) == "READY"
 
-    def command(text):
+    assert click is not None, (
+        "A real OS mouse callback is required for complete Sound control coverage"
+    )
+
+    def request(text):
         app.stdin.write(text + "\n")
         app.stdin.flush()
-        fields = read_fixture(app, log).split("\t")
+        return read_fixture(app, log).split("\t")
+
+    def command(text):
+        fields = request(text)
         assert len(fields) == 6 and fields[0] == "OK", fields
         assert fields[2] == fields[3], "Audio and persisted-setting mute state disagree"
         assert fields[5] == "available", fields[5]
@@ -159,17 +178,44 @@ def audit_states(app, log, key, source, output):
             "focused": fields[4] == "true",
         }
 
-    def mute_to(wanted):
+    def sound_target():
+        fields = request("sound-target")
+        assert len(fields) == 4 and fields[0] == "SOUND", fields
+        return fields[1], (int(fields[2]), int(fields[3]))
+
+    def focus_sound():
+        for _ in range(30):
+            previous, point = sound_target()
+            if previous == "sound":
+                return point
+            key("Tab", True)
+            time.sleep(0.05)
+            key("Tab", False)
+            deadline = time.monotonic() + 3
+            while sound_target()[0] == previous and time.monotonic() < deadline:
+                time.sleep(0.005)
+            assert sound_target()[0] != previous, (
+                "Physical Tab did not change menu focus"
+            )
+        raise AssertionError("Physical Tab navigation did not reach Sound")
+
+    def mute_to(wanted, binding="m", point=None):
         started = time.monotonic()
-        key("m", True)
+        if binding == "Mouse":
+            click(*point)
+        else:
+            key(binding, True)
         try:
             while time.monotonic() - started < 3:
                 if command("status")["muted"] == wanted:
                     return (time.monotonic() - started) * 1000
                 time.sleep(0.005)
-            raise AssertionError("Physical M did not reach the requested audio state")
+            raise AssertionError(
+                f"Physical {binding} did not reach the requested audio state"
+            )
         finally:
-            key("m", False)
+            if binding != "Mouse":
+                key(binding, False)
 
     # Warm real key delivery and restore sound before measuring any state.
     mute_to(True)
@@ -178,40 +224,63 @@ def audit_states(app, log, key, source, output):
     evidence = {}
     failures = []
     states = ["TITLE", "PLAYING", "PAUSED", "RESPAWNING", "CHAPTER_COMPLETE", "WON"]
-    for state in states:
+    cases = [(state, "m") for state in states] + [
+        (state, binding)
+        for state in ("TITLE", "PAUSED")
+        for binding in ("Mouse", "Return", "space", "KP_Enter")
+    ]
+    for state, binding in cases:
+        label = state if binding == "m" else state + "-" + binding
         command("state " + state)
         time.sleep(0.2)
         status = command("status")
         assert status["state"] == state and status["focused"], status
         assert not status["muted"], status
+        point = None
+        if binding == "Mouse":
+            point = sound_target()[1]
+        elif binding != "m":
+            point = focus_sound()
         row = {
-            "method": "fixture state and original gem cue; physical X11 M only",
+            "method": method,
+            "binding": binding,
+            "state": state,
+            "file_prefix": label,
             "delivery_ms": {},
         }
-        evidence[state] = row
-        row["full"] = record(source, output, state + "-full", lambda: command("cue"))
+        evidence[label] = row
+        row["full"] = record_audio(
+            source, output, label + "-full", lambda: command("cue")
+        )
+        row["long"] = record_audio(
+            source, output, label + "-long", lambda: command("cue win")
+        )
 
-        def cut(result=row):
-            command("cue")
-            time.sleep(0.05)
-            result["delivery_ms"]["mute"] = mute_to(True)
+        def cut(result=row, activation=binding, location=point):
+            command("cue win")
+            time.sleep(0.35)
+            result["delivery_ms"]["mute"] = mute_to(True, activation, location)
 
-        row["cut"] = record(source, output, state + "-cut", cut)
-        row["muted"] = record(source, output, state + "-muted", lambda: command("cue"))
+        row["cut"] = record_audio(source, output, label + "-cut", cut)
+        row["muted"] = record_audio(
+            source, output, label + "-muted", lambda: command("cue")
+        )
 
-        def restore(result=row):
-            result["delivery_ms"]["restore"] = mute_to(False)
+        def restore(result=row, activation=binding, location=point):
+            result["delivery_ms"]["restore"] = mute_to(False, activation, location)
 
         # Production unmute emits its own gem cue; no fixture cue is used here.
-        row["unmute"] = record(source, output, state + "-unmute", restore)
-        row["restored"] = record(
-            source, output, state + "-restored", lambda: command("cue")
+        row["unmute"] = record_audio(source, output, label + "-unmute", restore)
+        row["restored"] = record_audio(
+            source, output, label + "-restored", lambda: command("cue")
         )
         final = command("status")
         checks = {
             "full cue audible": row["full"]["rms"] > 20,
-            "mute interrupts active cue": row["cut"]["active_frames"]
-            < row["full"]["active_frames"] * 0.9,
+            "long reference cue audible": row["long"]["rms"] > 20,
+            "mute stops audible cue": row["cut"]["rms"] > 20
+            and row["cut"]["active_frames"] < row["long"]["active_frames"] * 0.8
+            and row["cut"]["tail_peak"] == 0,
             "muted cue is silent": row["muted"]["peak"] == 0,
             "physical unmute feedback audible": row["unmute"]["rms"] > 20,
             "restored cue audible": row["restored"]["rms"] > 20,
@@ -222,23 +291,26 @@ def audit_states(app, log, key, source, output):
         row["checks"] = checks
         row["result"] = "PASS" if all(checks.values()) else "FAIL"
         failures.extend(
-            f"{state}: {name}" for name, passed in checks.items() if not passed
+            f"{label}: {name}" for name, passed in checks.items() if not passed
         )
         (output / "results.json").write_text(json.dumps(evidence, indent=2) + "\n")
-        print(state, row["result"], checks, flush=True)
+        print(label, row["result"], checks, flush=True)
     assert not failures, failures
     print(
-        "PASS: physical M interrupts, silences and restores actual game output in all six states."
+        "PASS: all 14 physical M and Sound-menu cases stop audible cues, silence output and restore it."
     )
 
 
 def main():
+    from Xlib import XK, X, display, error
+    from Xlib.ext import xtest
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", default="build/audio-audit")
     parser.add_argument(
         "--state-fixture",
         action="store_true",
-        help="Use AudioStateFixture to cover all six game states",
+        help="Cover M in six states and all eight Sound-menu activation bindings",
     )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -307,8 +379,14 @@ def main():
                 time.sleep(0.05)
                 key(name, False)
 
+            def click_sound(x, y):
+                xtest.fake_input(dpy, X.MotionNotify, x=x, y=y)
+                xtest.fake_input(dpy, X.ButtonPress, 1)
+                xtest.fake_input(dpy, X.ButtonRelease, 1)
+                dpy.sync()
+
             if args.state_fixture:
-                audit_states(app, log, key, source[0], output)
+                audit_states(app, log, key, source[0], output, click=click_sound)
             else:
                 evidence = {}
                 for phase in ["on", "muted", "restored"]:

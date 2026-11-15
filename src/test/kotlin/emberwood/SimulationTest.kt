@@ -10,6 +10,20 @@ import kotlin.test.assertTrue
 class SimulationTest {
     private val dt = 1.0 / 60.0
 
+    @Test fun sectionNamesFollowWorldPositionAndBacktracking() {
+        val level = LevelState(Levels.all.first())
+        for ((x, expected) in listOf(
+            140.0 to "Emberwood",
+            700.0 to "A quick dash",
+            2000.0 to "Bramble Crossing",
+            3600.0 to "Keep moving",
+            5000.0 to "Boing!",
+            1000.0 to "Mind the gap!",
+        )) {
+            assertEquals(expected, level.sectionAt(x))
+        }
+    }
+
     private fun flat(): Game {
         val source = Levels.all.first()
         val world =
@@ -452,9 +466,12 @@ internal class RouteDriver(
     private var jumping = false
     private var previousJump = false
 
-    private fun tick(targetX: Double? = null) {
+    private fun tick(
+        targetX: Double? = null,
+        dash: Boolean = false,
+    ) {
         val distance = if (targetX == null) 0.0 else targetX - game.player.x
-        val stop = max(4.0, abs(game.player.vx) * if (nativeTiming) 0.12 else 0.06)
+        val stop = max(4.0, abs(game.player.vx) * if (nativeTiming && game.player.grounded) 0.12 else 0.06)
         val input =
             InputFrame(
                 left = distance < -stop,
@@ -463,6 +480,8 @@ internal class RouteDriver(
                 jumpPressed = jumping && !previousJump,
                 jumpReleased =
                     !jumping && previousJump,
+                dashHeld = dash,
+                dashPressed = dash,
             )
         previousJump = jumping
         advance(input)
@@ -489,6 +508,20 @@ internal class RouteDriver(
             } else {
                 null
             }
+        if (nativeTiming && moving != null) {
+            // Wait at the departure ledge for the visible platform to approach.
+            // Native execution starts at a real, variable patrol phase.
+            val departureX = game.player.x
+            val waitUntil = game.level.age + 5.0
+            while (game.level.age < waitUntil) {
+                val distance = moving.bounds.x + moving.bounds.w / 2 - departureX
+                val velocity = moving.bounds.x - moving.previous.x
+                if (abs(distance) < 240 && distance * velocity <= 0) break
+                jumping = false
+                tick(departureX)
+                if (game.state != GameState.PLAYING) return false
+            }
+        }
         if (step.kind != "bounce") {
             jumping = false
             repeat(2) { tick() }
@@ -522,10 +555,27 @@ internal class RouteDriver(
                 jumping = false
                 jumpPhase = 1
             } else if (frame >= 20 && jumpPhase == 1) {
-                jumping = true
+                // A close moving platform can be reached with the first jump.
+                // Do not queue another press just as the fox lands on it.
+                val landingOnMoving =
+                    nativeTiming &&
+                        moving != null &&
+                        game.player.vy > 0 &&
+                        game.player.y >= target.y - 65 &&
+                        abs(game.player.x - target.x) < moving.bounds.w / 2 - 8
+                if (!landingOnMoving) jumping = true
                 jumpPhase = 2
             }
-            tick(if (frame < takeoffDelay) launchX else target.x)
+            // The native route uses the real air dash to give long jumps room
+            // for input delivery and braking, especially beside moving patrols.
+            val dash =
+                nativeTiming &&
+                    abs(target.x - game.player.x) > 100 &&
+                    game.player.y < target.y - 20 &&
+                    game.player.vy >= 0 &&
+                    game.player.jumpsLeft == 0 &&
+                    game.player.canDash
+            tick(if (frame < takeoffDelay) launchX else target.x, dash)
             if (game.state == GameState.CHAPTER_COMPLETE || game.state == GameState.WON) return true
             if (game.state != GameState.PLAYING) return false
             if (step.kind == "mushroom" && game.player.vy < -700) return true

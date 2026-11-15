@@ -81,8 +81,26 @@ field (0.1.0 becomes 1.1.0), while `CFBundleShortVersionString`, the game and th
 download keep the actual release version 0.1.0. The native installation test
 checks both fields. The validation rule is in [OpenJDK's macOS bundle-version
 parser](https://github.com/openjdk/jdk25u/blob/master/src/jdk.jpackage/macosx/classes/jdk/jpackage/internal/CFBundleVersion.java).
-Both macOS architectures in CI run `43695656000` caught this validation failure;
-the metadata correction still requires a successful native package/install run.
+Both macOS architectures in CI run `43695656000` caught this validation failure.
+The corrected packages built on both architectures in run `43697597725`.
+The ARM Mac also passed actual installation, signature checks, LaunchServices
+launch, keyboard play, and application quit. Its four original screenshots were
+inspected: the native title and paused equipment menu are legible, the menu bar
+identifies Emberwood Kotlin, the Dock uses the existing fox-and-forest icon, and
+physical Command+Q removes the window and running indicator. Local evidence is
+`build/ci-fourth-macos-arm/build/bundle-launch-macos/visual-review.md`.
+Intel Mac installation/GUI verification
+failed in that run and is being diagnosed; neither Mac build is fully verified
+while its performance and control audits remain failed.
+
+The next Mac run also compiles a test-only ScreenCaptureKit helper and checks the
+same fourteen mute and Sound-menu cases against both source and packaged Java.
+The filter contains only the launched game's process, with microphone capture
+disabled and no system-mix fallback. `tools/macos_audio_facility.py` first reports
+existing capture availability without requesting consent or changing permissions.
+The actual helper may request normal macOS consent; missing consent or incomplete
+PCM remains explicitly unverified. These checks are pending native execution,
+not established by the Python routing checks on Linux.
 
 ## Actual Linux package and launcher checks
 
@@ -106,7 +124,7 @@ the title and paused screen were inspected. A repeat under an isolated Openbox
 window manager pressed physical Alt+F4 and verified that the installed process
 exited. The original **Emberwood** desktop entry
 and repository remain unchanged. Local evidence is in `build/installed-audit/`,
-`build/installed-user-audit/`, `build/installed-physical-close-final.log`, and
-`build/package-install-final.log`. This installed candidate matches the measured
+`build/installed-user-audit/`, `build/installed-physical-close-0901ee81.log`, and
+`build/package-install-0901ee81.log`. This installed candidate matches the checked
 game JAR SHA-256
-`02b181548e236c13eae655d803e217949dda208ed538e1a4b882dc68a475536a`.
+`0901ee811ad66953b5919e24aaebf9044fe973600d9b415046cfdf3176bd3cc4`.
