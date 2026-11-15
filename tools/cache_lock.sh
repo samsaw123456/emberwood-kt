@@ -6,14 +6,15 @@ acquire_cache_lock() {
     # Noclobber uses exclusive file creation. Some mkdir implementations report
     # success for a racing EEXIST, so a directory is not the ownership token.
     while ! (set -o noclobber; printf '%s\n' "$$" > "$lock") 2>/dev/null; do
-        if [[ -f "$lock" && -r "$lock" ]]; then
-            owner=$(cat "$lock")
+        # Another owner/recovery waiter may remove the file after these checks.
+        # A failed read takes the same bounded retry path as a busy lock.
+        if [[ -f "$lock" && -r "$lock" ]] && owner=$(cat "$lock" 2>/dev/null); then
             if [[ $owner =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
                 # Only one waiter may remove this dead owner's file. The hard-link
                 # claim also lets a delayed waiter distinguish a replacement lock.
                 recovery=$lock.recovery-$owner
                 if ln -- "$lock" "$recovery" 2>/dev/null; then
-                    if [[ $(cat "$recovery") == "$owner" && "$lock" -ef "$recovery" ]]; then rm -f -- "$lock"; fi
+                    if [[ $(cat "$recovery" 2>/dev/null) == "$owner" && "$lock" -ef "$recovery" ]]; then rm -f -- "$lock"; fi
                     rm -f -- "$recovery"
                     continue
                 fi
@@ -21,7 +22,7 @@ acquire_cache_lock() {
         fi
         ((attempt+=1))
         if ((attempt >= 300)); then
-            printf 'Another %s is still running, or its lock recovery was interrupted. Lock: %s\n' "$description" "$lock" >&2
+            printf 'Another %s is still running, its lock is unreadable, or recovery was interrupted. Lock: %s\n' "$description" "$lock" >&2
             return 2
         fi
         sleep 1

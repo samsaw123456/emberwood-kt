@@ -115,6 +115,33 @@ class BootstrapCacheTests(unittest.TestCase):
         (self.install / "install-file.lock").write_text("2147483647\n")
         self.concurrent()
 
+    def test_lock_disappearing_between_existence_check_and_read_is_retried(self):
+        self.install.mkdir(parents=True)
+        lock = self.install / "install-file.lock"
+        lock.write_text("2147483647\n")
+        marker = self.root / "lock-read-race-observed"
+        command = self.root / "commands/cat"
+        command.write_text(
+            "#!/usr/bin/env bash\n"
+            'if [[ ${1:-} == "$FIXTURE_LOCK" && ! -e "$FIXTURE_RACE_MARKER" ]]; then\n'
+            '  printf "%s\\n" removed > "$FIXTURE_RACE_MARKER"\n'
+            '  rm -- "$1"\n'
+            "fi\n"
+            'exec "$FIXTURE_REAL_CAT" "$@"\n'
+        )
+        command.chmod(0o755)
+        self.environment.update(
+            FIXTURE_LOCK=str(lock),
+            FIXTURE_RACE_MARKER=str(marker),
+            FIXTURE_REAL_CAT=shutil.which("cat"),
+        )
+        result = self.run_bootstrap()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(marker.read_text().splitlines(), ["removed"])
+        self.assertEqual(self.log.read_text().splitlines(), ["called"])
+        self.assertTrue((self.install / "jdk/bin/java").is_file())
+        self.assertFalse(lock.exists())
+
     def test_interrupted_download_cleans_owned_files_then_recovers(self):
         process = subprocess.Popen(
             [self.bootstrap],

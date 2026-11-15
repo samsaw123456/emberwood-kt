@@ -41,7 +41,7 @@ cp -- "$jar" "$work/input/emberwood-kotlin.jar"
 "$java_home/bin/jpackage" --type app-image --name 'Emberwood Kotlin' --dest "$stage" \
     --input "$work/input" --main-jar emberwood-kotlin.jar --main-class emberwood.MainKt \
     --runtime-image "$runtime" --app-version "$bundle_version" --vendor 'Emberwood contributors' \
-    --mac-package-identifier org.emberwood.kotlin --mac-app-category public.app-category.adventure-games \
+    --mac-package-identifier org.emberwood.kotlin --mac-app-category adventure-games \
     --icon "$work/Emberwood.icns" --java-options -Xms32m --java-options -Xmx256m \
     --java-options --enable-native-access=ALL-UNNAMED >&2
 printf '%s\n' 'Managed by Emberwood Kotlin installer' > "$app/Contents/Resources/.emberwood-kotlin-managed"

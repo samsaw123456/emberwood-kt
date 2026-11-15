@@ -2,6 +2,7 @@
 
 import json
 import os
+import plistlib
 import shutil
 import signal
 import subprocess
@@ -48,7 +49,7 @@ elif name == 'jpackage':
     (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
         'CFBundleVersion': option('--app-version'),
         'CFBundleShortVersionString': option('--app-version'),
-        'LSApplicationCategoryType': option('--mac-app-category'),
+        'LSApplicationCategoryType': 'public.app-category.' + option('--mac-app-category'),
     }))
 elif name == 'sips':
     shutil.copyfile(args[3], option('--out'))
@@ -212,6 +213,13 @@ class SourceMacAppTests(unittest.TestCase):
 
     def test_build_reuse_and_actual_jar_and_module_invalidation(self):
         first = self.app()
+        metadata = plistlib.loads((first / "Contents/Info.plist").read_bytes())
+        self.assertEqual(
+            metadata["LSApplicationCategoryType"],
+            "public.app-category.adventure-games",
+        )
+        self.assertEqual(metadata["CFBundleShortVersionString"], "0.1.0")
+        self.assertEqual(metadata["CFBundleVersion"], "1.1.0")
         self.assertEqual(self.app(), first)
         self.assertEqual(len(self.calls("jlink")), 1)
         self.assertEqual(len(self.calls("jpackage")), 1)
