@@ -26,6 +26,43 @@ class Point(ctypes.Structure):
     _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
 
 
+def capture_initialization_stacks(pid, output):
+    """Read only the spawned game's stacks, never properties or environment."""
+    commands = {
+        "java-threads": [
+            Path(os.environ["JAVA_HOME"]) / "bin/jcmd",
+            str(pid),
+            "Thread.print",
+            "-l",
+        ],
+        "native-sample": [
+            "/usr/bin/sample",
+            str(pid),
+            "1",
+            "1",
+            "-file",
+            output / "native-sample.txt",
+        ],
+    }
+    results = {}
+    for label, command in commands.items():
+        with (output / f"{label}.log").open("w") as log:
+            try:
+                result = subprocess.run(
+                    command,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                    timeout=15,
+                )
+                results[label] = {"exit_code": result.returncode}
+            except (OSError, subprocess.TimeoutExpired) as error:
+                results[label] = {"result": "UNVERIFIED", "reason": str(error)}
+    (output / "initialization-stack-results.json").write_text(
+        json.dumps(results, indent=2) + "\n"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("build/audio-audit-macos"))
@@ -222,6 +259,10 @@ def main():
             (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
             for name in list(held):
                 key(name, False)
+            if app.poll() is None and "finish initialization" in summary.get(
+                "reason", ""
+            ):
+                capture_initialization_stacks(app.pid, output)
             if app.poll() is None:
                 app.stdin.close()
                 try:

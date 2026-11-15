@@ -159,6 +159,22 @@ def main():
         parser.error("Run this diagnostic on macOS")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    # Empty JFrame must be the first GUI/audio experiment on this fresh runner.
+    # Each later context waits for its predecessor's process and windows to leave.
+    with (output / "contexts.log").open("w") as log:
+        subprocess.run(
+            [
+                sys.executable,
+                ROOT / "tools/mac_audio_contexts.py",
+                "--output",
+                output / "contexts",
+            ],
+            cwd=ROOT,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=True,
+            timeout=420,
+        )
     layout_helper = output / "mac-audio-layout"
     with (output / "sdk-layout-compile.log").open("w") as log:
         subprocess.run(

@@ -20,6 +20,14 @@ the ordinary game window with no modal alert or attached sheet; Java focus flags
 alone are insufficient. These checks never approve a permission dialog. Missing
 audio remains unverified by the separate output audit.
 
+Copied macOS application audits can set `audit.inputSocket` to a private external
+test controller. The controller binds its guard, keyboard and capture sessions to
+the exact game PID, checks the ordinary native window, and uses its existing
+Accessibility and screen-capture access. The game exchanges IPC only; neither it
+nor the helper requests or grants permissions. `audit.root` and `audit.python`
+identify the checkout and interpreter when LaunchServices starts outside the
+repository. Without the socket property, the normal direct helper is unchanged.
+
 | Physical binding | State / expected effect |
 | --- | --- |
 | A, Left arrow (separately) | Playing: move and face left; release brakes |
@@ -52,6 +60,13 @@ farther, so the fox moves across the screen instead. Cases 014–017 separately
 exercise all four bindings after the real Gentle-motion menu toggle, checking
 visible facing, independent spike landmarks and stopping after release. The
 ordinary-camera cases also check visible fox movement and scrolling landmarks.
+
+Every Gentle-motion menu binding additionally enters gameplay through Start or
+Resume and records the original bat wings frozen after enabling it, then moving
+after the same binding disables it. For title-menu rows, the isolated fixture
+restages TITLE between activations because there is no return-to-title command.
+That setup preserves the actual selected setting and is separate from the
+physical input and rendered animation being tested.
 
 The test window uses a non-interactive 6×6 color marker to confirm that the desktop
 has presented the requested frame before capture. Saved PNGs retain the actual

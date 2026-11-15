@@ -129,6 +129,12 @@ private class NativeAudit(
                 }
             }
             if (::frame.isInitialized) edt { frame.dispose() }
+            try {
+                NativeAuditTools.closeCapture()
+            } catch (failure: Throwable) {
+                failures++
+                failure.printStackTrace()
+            }
             flushImages()
             Files.writeString(
                 output.resolve("controls.tsv"),
@@ -259,14 +265,21 @@ private class NativeAudit(
                 val p = panel.locationOnScreen
                 java.awt.Rectangle(p.x, p.y, panel.width, panel.height)
             }
+
         // Cocoa may return the previous compositor frame after paintImmediately. A marker in the
         // same window proves presentation; it never intercepts input or changes game state.
-        var image = robot.createScreenCapture(bounds)
+        fun capture() =
+            if (NativeAuditTools.hasExternalController) {
+                NativeAuditTools.capture(bounds, output.resolve("external-capture.png"))
+            } else {
+                robot.createScreenCapture(bounds)
+            }
+        var image = capture()
         await("Desktop presentation for $label") {
             if ((image.getRGB(10, 10) and 0xffffff) == (marker.rgb and 0xffffff)) {
                 true
             } else {
-                image = robot.createScreenCapture(bounds)
+                image = capture()
                 false
             }
         }
@@ -666,6 +679,70 @@ private class NativeAudit(
         }
     }
 
+    private fun motionSetting(
+        state: GameState,
+        activateSetting: (Boolean) -> Unit,
+    ) {
+        check(edt { !panel.settings.gentle && !panel.game.reducedMotion })
+        activateSetting(true)
+        snap("motion-setting-enabled")
+        check(edt { panel.settings.gentle && panel.game.reducedMotion })
+        motionEffect(state, frozen = true)
+        activateSetting(false)
+        snap("motion-setting-disabled")
+        check(edt { !panel.settings.gentle && !panel.game.reducedMotion })
+        motionEffect(state, frozen = false)
+    }
+
+    private fun motionEffect(
+        state: GameState,
+        frozen: Boolean,
+    ) {
+        click(if (state == GameState.TITLE) "start" else "resume")
+        await("Motion setting enters actual gameplay") { edt { panel.game.state == GameState.PLAYING } }
+        // Only the observer's patrol is stationary; the original bat art animates at the real game age.
+        val observer = Critter(CritterDef("bat", Vec(430.0, 350.0), 0.0, 0.0))
+        edt {
+            panel.game.level.critters
+                .add(observer)
+        }
+
+        fun wings(label: String): BooleanArray {
+            val image = snap(label)
+            return BooleanArray(100 * 100) { index ->
+                (image.getRGB(380 + index % 100, 240 + index / 100) and 0xffffff) == 0xa58ed4
+            }
+        }
+        try {
+            val before = wings(if (frozen) "binding-wings-frozen-before" else "binding-wings-animated-before")
+            check(before.any { it }) { "Original bat wings are not visibly present" }
+            if (frozen) {
+                robot.delay(180)
+                val after = wings("binding-wings-frozen-after")
+                check(before.contentEquals(after)) { "This Gentle-motion binding did not freeze the visible bat wings" }
+            } else {
+                await("This binding restores visible bat animation") {
+                    robot.delay(80)
+                    !before.contentEquals(wings("binding-wings-animated-after"))
+                }
+            }
+        } finally {
+            edt {
+                panel.game.level.critters
+                    .remove(observer)
+            }
+        }
+        tap(KeyEvent.VK_ESCAPE)
+        check(edt { panel.game.state == GameState.PAUSED })
+        if (state == GameState.TITLE) {
+            // There is no return-to-title command. Restage only the menu for this row's second
+            // physical activation, preserving the actual setting selected by its first activation.
+            edt { panel.game.state = GameState.TITLE }
+            await("Fixture restages TITLE after visible motion proof") { edt { observedDesktopState.get(panel) == GameState.TITLE } }
+        }
+        snap("motion-menu-returned")
+    }
+
     private fun dashCases() {
         for (modifier in listOf("left-shift", "right-shift")) {
             for (direction in listOf(-1, 1)) {
@@ -957,15 +1034,29 @@ private class NativeAudit(
         for (state in listOf(GameState.TITLE, GameState.PAUSED)) {
             for (key in activationKeys) {
                 for (id in listOf("sound", "motion")) {
-                    case("$key / $id", state, "Focused setting changes its visible on/off label and restores on second activation", true) {
-                        focus(id)
-                        snap("setting-focused")
-                        val previous = edt { if (id == "sound") panel.settings.muted else panel.settings.gentle }
-                        activate(key, hold = true)
-                        snap("setting-toggled")
-                        check(edt { (if (id == "sound") panel.settings.muted else panel.settings.gentle) != previous })
-                        activate(key)
-                        check(edt { (if (id == "sound") panel.settings.muted else panel.settings.gentle) == previous })
+                    val expected =
+                        if (id == "motion") {
+                            "This binding toggles Gentle motion; gameplay wings visibly freeze, then animate after the same binding restores it"
+                        } else {
+                            "Focused setting changes its visible on/off label and restores on second activation"
+                        }
+                    case("$key / $id", state, expected, true) {
+                        if (id == "motion") {
+                            motionSetting(state) { hold ->
+                                focus(id)
+                                snap("setting-focused")
+                                activate(key, hold)
+                            }
+                        } else {
+                            focus(id)
+                            snap("setting-focused")
+                            val previous = edt { panel.settings.muted }
+                            activate(key, hold = true)
+                            snap("setting-toggled")
+                            check(edt { panel.settings.muted != previous })
+                            activate(key)
+                            check(edt { panel.settings.muted == previous })
+                        }
                     }
                 }
             }
@@ -1164,12 +1255,23 @@ private class NativeAudit(
         }
         for (state in listOf(GameState.TITLE, GameState.PAUSED)) {
             for (id in listOf("sound", "motion")) {
-                case("Mouse left / $id", state, "Click changes the displayed setting and a second click restores it") {
-                    val before = edt { if (id == "sound") panel.settings.muted else panel.settings.gentle }
-                    click(id, hold = true)
-                    snap("mouse-setting-toggle")
-                    check(edt { (if (id == "sound") panel.settings.muted else panel.settings.gentle) != before })
-                    click(id)
+                val expected =
+                    if (id == "motion") {
+                        "This click toggles Gentle motion; gameplay wings visibly freeze, then animate after the same click restores it"
+                    } else {
+                        "Click changes the displayed setting and a second click restores it"
+                    }
+                case("Mouse left / $id", state, expected) {
+                    if (id == "motion") {
+                        motionSetting(state) { hold -> click(id, hold = hold) }
+                    } else {
+                        val before = edt { panel.settings.muted }
+                        click(id, hold = true)
+                        snap("mouse-setting-toggle")
+                        check(edt { panel.settings.muted != before })
+                        click(id)
+                        check(edt { panel.settings.muted == before })
+                    }
                 }
             }
         }
@@ -1328,7 +1430,9 @@ private class NativeAudit(
                     edt {
                         JFrame("Emberwood mouse focus audit").apply {
                             setSize(240, 160)
-                            setLocation(20, 20)
+                            // Leave the game's upper-left presentation marker and Sound button visible.
+                            val origin = panel.locationOnScreen
+                            setLocation(origin.x + panel.width - 240, origin.y + panel.height - 160)
                             isVisible = true
                             toFront()
                             requestFocus()

@@ -45,17 +45,17 @@ desktop mix. Java audio flags alone do not satisfy this check.
   invalid/offline JDK errors, bad checksums and interrupted-install rollback.
 - Bootstrap: **passed**. Empty-cache Java download, checksum, extraction and
   offline reuse were exercised without changing system Java.
-- Kotlin formatting: **passed**. The final source is formatted with ktlint.
-- Build, lint and automated tests: **passed**, 28 tests. The simulation campaign
+- Kotlin formatting: **passed**. The current production candidate is formatted with ktlint.
+- Build, lint and automated tests: **passed**, 41 tests. The simulation campaign
   reaches all 20 levels, all 60 acorns and 20 hidden fireflies, all six guardians
   and all 13 equipment unlocks with zero retries. Optional gems collected by this
   route: 196 of 378. This is simulation evidence, not a physical-input playthrough.
 - Artwork review: all eight regions, six guardians, four regular monsters and
   thirteen equipment appearances were rendered and visually inspected.
-- Actual Linux sound: **passed** for the source JAR and bundled runtime. Physical
-  M input silenced the game's isolated playback stream to zero PCM, then restored
-  audible output. Each phase recorded 96,000 samples; packaged RMS was 437.08
-  before mute, 0 while muted, and 498.96 after unmute.
+- Actual Linux sound: the fourteen M/Sound cases passed on the previous recorded
+  source and bundled candidates. Captured game-only PCM proves mute, interruption
+  of an active cue and restored output, including the original gem pitches.
+  The new audio candidate is undergoing its own repeat; see PERFORMANCE.md.
 - Linux installation and native launcher: **passed** with invalid global Java
   and internet socket creation blocked. The separate application opens through
   the desktop registry and closes using physical Alt+F4. See PACKAGING.md.
@@ -63,7 +63,7 @@ desktop mix. Java audio flags alone do not satisfy this check.
   task picker loads Play Emberwood Kotlin; selecting it launches the game. Return,
   movement, jump, pause and window close were exercised in that launched window.
   Screenshots are retained in `build/zed-audit/`.
-- Native campaign: **all twenty levels passed** on the candidate below using
+- Native campaign: **all twenty levels passed** on JAR `ce6f5af4…` using
   normal-rate physical OS keys from the title through victory. It collected all
   60 acorns, all 20 fireflies, 199/378 optional gems, and defeated
   all six guardians. One actual fall in Sunlit Ridge exercised checkpoint recovery;
@@ -101,12 +101,23 @@ desktop mix. Java audio flags alone do not satisfy this check.
   thread. Two regression tests exercise blocked initialization and blocked native
   shutdown, including eventual device release. Output readiness now requires an
   opened, running line; absence of an error alone is not evidence of readiness.
+- A Sound button retained hover styling after the pointer moved away during
+  focus loss. Focus cleanup now clears hover, pressed styling and the pointer
+  shape. Its new physical-input regression brings the inventory to 280 cases.
+- Intel Mac startup exposed Java Sound's recording-device probing during output
+  initialization. A playback-only AudioQueue backend replaces that Mac path;
+  seven native-callback regression tests pass, while real Mac ABI, startup,
+  lifecycle and captured-PCM checks are still in progress. Missing native
+  libraries and failed output resets now become explicit audio-unavailable
+  states without letting mute or window close hang the interface.
 
 The current local candidate JAR is
-`ce6f5af4fba0455e977936eead904e24608083fc8b256d4d07b406aaddbd3bf8`.
+`d5499672bb8cd4dd0708f5701d89cbf7dc81f4c3f480aa728c456c5b74bb30af`.
 Separate `ktlintFormat`, then `check fatJar`, completed successfully with all
-28 tests. Original-resource verification and the six installer fixtures passed
-again. Native playthrough attempts use ordinary input and real campfire retries;
+41 tests. Original-resource verification and the six installer fixtures passed
+again. The complete native campaign evidence is pinned to the earlier JAR
+`ce6f5af4fba0455e977936eead904e24608083fc8b256d4d07b406aaddbd3bf8`.
+Native playthrough attempts use ordinary input and real campfire retries;
 every retry is retained in their results, and no state fixture or teleport counts
 as campaign progress.
 

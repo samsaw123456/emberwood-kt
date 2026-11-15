@@ -11,16 +11,23 @@ object NativeInputGate {
         output: Path,
     ) {
         awaitAudioResolution(audio, output, 15_000)
-        if (System.getProperty("os.name").startsWith("Mac")) {
+        if (NativeAuditTools.hasExternalController || System.getProperty("os.name").startsWith("Mac")) {
             val evidence = output.resolve("input-startup-native-window.json")
+            val builder =
+                if (NativeAuditTools.hasExternalController) {
+                    NativeAuditTools.bridge("guard")
+                } else {
+                    NativeAuditTools
+                        .python(
+                            "-c",
+                            "import json,sys; from tools.mac_game_focus import require_game_window; " +
+                                "print(json.dumps(require_game_window(int(sys.argv[1]))))",
+                            ProcessHandle.current().pid().toString(),
+                        )
+                }
             val process =
-                NativeAuditTools
-                    .python(
-                        "-c",
-                        "import json,sys; from tools.mac_game_focus import require_game_window; " +
-                            "print(json.dumps(require_game_window(int(sys.argv[1]))))",
-                        ProcessHandle.current().pid().toString(),
-                    ).redirectOutput(evidence.toFile())
+                builder
+                    .redirectOutput(evidence.toFile())
                     .redirectError(output.resolve("input-startup-native-window.log").toFile())
                     .start()
             try {

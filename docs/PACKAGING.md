@@ -101,10 +101,21 @@ prompt-free and audio initialization completed, but the read-only global
 accessibility lookup stopped PCM controls before any input. Intel still displayed
 the microphone dialog with its exact `Null Audio Device` name; both audio fixtures
 timed out before input. The named-mixer experiment is therefore insufficient and
-is not a shipped workaround. The next manual diagnostic exercises the production
-output backend directly, with no mixer override, and uses a scoped game-PID
+is not a shipped workaround. The production diagnostic exercises the output
+backend directly, with no mixer override, and uses a scoped game-PID
 accessibility lookup before physical input. The failed runs and full startup
 images remain in `build/ci-output-macos-{arm,intel}/mac-output-diagnostic/`.
+
+Run `43705516072` tested the `bdba1782` AudioQueue output backend on both Mac
+architectures. Installed-SDK ABI comparisons and three output-only lifecycle
+cycles passed with both the source JDK and exact bundled runtime. Apple Silicon
+also passed actual startup and all fourteen PCM control cases for source and
+bundle; its screenshots and WAV evidence were inspected. Intel still displayed
+a microphone dialog during actual GUI startup, and the audio readiness guard
+stopped controls before any input. The no-window lifecycle result does not prove
+GUI readiness. The next diagnostic adds ordered empty-window/audio-worker
+experiments and exact-process stacks to isolate that remaining failure. Audio
+gaps and actual native-app performance also remain under investigation.
 
 Mac run `43700719691` compiled a test-only ScreenCaptureKit helper and passed the
 same fourteen mute and Sound-menu cases against both source and packaged Java
@@ -140,7 +151,9 @@ the title and paused screen were inspected. A repeat under an isolated Openbox
 window manager pressed physical Alt+F4 and verified that the installed process
 exited. The original **Emberwood** desktop entry
 and repository remain unchanged. Local evidence is in `build/installed-audit/`,
-`build/installed-user-audit/`, `build/installed-physical-close-ce6f5af4.log`, and
-`build/package-install-ce6f5af4.log`. This installed candidate matches the checked
+`build/installed-user-audit/`, `build/installed-physical-close-d5499672.log`, and
+`build/package-install-d5499672.log`. Four actual launcher frames were inspected:
+title, right movement, paused equipment and the absent window after Alt+F4.
+This installed candidate matches the checked
 game JAR SHA-256
-`ce6f5af4fba0455e977936eead904e24608083fc8b256d4d07b406aaddbd3bf8`.
+`d5499672bb8cd4dd0708f5701d89cbf7dc81f4c3f480aa728c456c5b74bb30af`.

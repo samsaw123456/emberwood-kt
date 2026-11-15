@@ -81,9 +81,9 @@ object PerformanceAudit {
                     )
                 }
                 NativeInputGate.awaitReady(panel.audio, output)
-                robot = Robot().apply { autoDelay = 3 }
+                if (!NativeAuditTools.hasExternalController) robot = Robot()
                 physicalKeys = PhysicalKeys(output.resolve("physical-key-delivery.jsonl"))
-                robot.delay(1000)
+                Thread.sleep(1000)
                 screenshot("title-before")
                 measure("title-idle", "idle", 6.0)
                 screenshot("title-after")
@@ -119,7 +119,7 @@ object PerformanceAudit {
                 screenshot("soak-before")
                 measure("active-soak", "physical input after gear fixture", soakSeconds, active = true, input = ::soakInput)
                 releaseKeys()
-                robot.delay(1200)
+                Thread.sleep(1200)
                 val liveAfter = liveHeap()
                 screenshot("soak-after")
                 verify(liveAfter - liveBefore < 16L * 1024 * 1024, "Retained heap grew by more than 16 MiB during the soak")
@@ -171,6 +171,7 @@ object PerformanceAudit {
                     }
                 }
                 finish { if (::physicalKeys.isInitialized) physicalKeys.close() }
+                finish { NativeAuditTools.closeCapture() }
                 keys.clear()
                 finish { if (::window.isInitialized) edt { window.dispose() } }
                 finish { writeMeasurements() }
@@ -222,23 +223,23 @@ object PerformanceAudit {
 
         private fun physicalCoreLoop() {
             coreTap(KeyEvent.VK_ENTER)
-            robot.delay(150)
+            Thread.sleep(150)
             val start = corePosition("start")
             coreKeys(setOf(KeyEvent.VK_D))
-            robot.delay(420)
+            Thread.sleep(420)
             coreKeys(emptySet())
             screenshot("core-right")
             corePosition("after D release")
             verify(edt { panel.game.player.x > start + 65 }, "Physical D input did not move right during core play")
             coreKeys(setOf(KeyEvent.VK_SPACE))
-            robot.delay(130)
+            Thread.sleep(130)
             verify(edt { panel.game.player.y < 510 }, "Physical Space did not jump during core play")
             screenshot("core-jump")
             coreKeys(emptySet())
             awaitCore("Jump landing") { edt { panel.game.player.grounded } }
             val leftStart = corePosition("before A press")
             coreKeys(setOf(KeyEvent.VK_A))
-            robot.delay(420)
+            Thread.sleep(420)
             coreKeys(emptySet())
             // Receipt and braking are separate: a delayed release cannot prove rest after a fixed sleep.
             awaitCore("A release braking") { edt { abs(panel.game.player.vx) < 0.01 } }
@@ -291,9 +292,9 @@ object PerformanceAudit {
 
         private fun coreTap(key: Int) {
             coreKeys(setOf(key))
-            robot.delay(35)
+            Thread.sleep(35)
             coreKeys(emptySet())
-            robot.delay(70)
+            Thread.sleep(70)
         }
 
         private fun awaitCore(
@@ -301,7 +302,7 @@ object PerformanceAudit {
             started: Long = System.nanoTime(),
             ready: () -> Boolean,
         ) {
-            while (!ready() && System.nanoTime() - started < 2_000_000_000L) robot.delay(5)
+            while (!ready() && System.nanoTime() - started < 2_000_000_000L) Thread.sleep(5)
             val passed = ready()
             coreTimings.add("$description\t${decimal((System.nanoTime() - started) / 1e6)}\t${if (passed) "PASS" else "FAIL"}")
             verify(passed, "$description did not complete within two seconds")
@@ -331,7 +332,7 @@ object PerformanceAudit {
                 panel.requestFocusInWindow()
                 panel.repaint()
             }
-            robot.delay(350)
+            Thread.sleep(350)
             verify(edt { window.isFocused && panel.isFocusOwner }, "Window lost focus before scene $chapter")
         }
 
@@ -373,7 +374,7 @@ object PerformanceAudit {
                     peakParticles = max(peakParticles, current.particles)
                     pollAt += 0.25
                 }
-                robot.delay(20)
+                Thread.sleep(20)
             }
             releaseKeys()
             val after = snapshot()
@@ -444,7 +445,7 @@ object PerformanceAudit {
 
         private fun liveHeap(): Long {
             System.gc()
-            robot.delay(400)
+            Thread.sleep(400)
             return usedHeap()
         }
 
@@ -458,7 +459,12 @@ object PerformanceAudit {
                     val location = panel.locationOnScreen
                     java.awt.Rectangle(location.x, location.y, panel.width, panel.height)
                 }
-            ImageIO.write(robot.createScreenCapture(rectangle), "png", output.resolve("$name.png").toFile())
+            val destination = output.resolve("$name.png")
+            if (NativeAuditTools.hasExternalController) {
+                NativeAuditTools.capture(rectangle, destination)
+            } else {
+                ImageIO.write(robot.createScreenCapture(rectangle), "png", destination.toFile())
+            }
         }
 
         private fun desiredKeys(desired: Set<Int>) {
@@ -474,9 +480,9 @@ object PerformanceAudit {
 
         private fun tap(key: Int) {
             desiredKeys(setOf(key))
-            robot.delay(35)
+            Thread.sleep(35)
             releaseKeys()
-            robot.delay(70)
+            Thread.sleep(70)
         }
 
         private fun verify(

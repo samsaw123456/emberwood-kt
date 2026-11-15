@@ -19,6 +19,7 @@ class Audio(
     )
 
     private val running = AtomicBoolean(true)
+    private val resetRequested = AtomicBoolean(false)
     private val voices = ArrayDeque<Voice>()
     private val clips =
         mapOf(
@@ -71,15 +72,11 @@ class Audio(
     }
 
     fun stop() {
-        synchronized(voices) { voices.clear() }
-        try {
-            line?.flush()
-        } catch (error: Exception) {
-            reportUnavailable(error)
-            close()
-        } catch (error: LinkageError) {
-            reportUnavailable(error)
-            close()
+        // Reset can wait inside a native driver. The existing audio thread owns
+        // that operation so mute, pause and focus loss never wait on the device.
+        synchronized(voices) {
+            voices.clear()
+            resetRequested.set(true)
         }
     }
 
@@ -102,18 +99,9 @@ class Audio(
             if (!running.get()) return
             val bytes = ByteArray(512)
             while (running.get()) {
-                synchronized(voices) {
-                    for (frame in 0 until bytes.size / 2) {
-                        var sum = 0
-                        for (voice in voices) if (voice.offset < voice.pcm.size) sum += voice.pcm[voice.offset++].toInt()
-                        if (muted) sum = 0
-                        val sample = sum.coerceIn(-32768, 32767)
-                        bytes[frame * 2] = sample.toByte()
-                        bytes[frame * 2 + 1] = (sample shr 8).toByte()
-                    }
-                    voices.removeAll { it.offset >= it.pcm.size }
-                }
-                device.write(bytes, 0, bytes.size)
+                if (resetRequested.getAndSet(false)) device.flush()
+                if (!running.get()) break
+                if (mix(bytes)) device.write(bytes, 0, bytes.size)
             }
         } catch (error: Exception) {
             reportUnavailable(error)
@@ -124,6 +112,23 @@ class Audio(
             device?.close()
         }
     }
+
+    private fun mix(bytes: ByteArray): Boolean =
+        synchronized(voices) {
+            // A second Stop may arrive while native reset is in progress. Do not
+            // consume a newer cue until that pending reset has also finished.
+            if (resetRequested.get()) return@synchronized false
+            for (frame in 0 until bytes.size / 2) {
+                var sum = 0
+                for (voice in voices) if (voice.offset < voice.pcm.size) sum += voice.pcm[voice.offset++].toInt()
+                if (muted) sum = 0
+                val sample = sum.coerceIn(-32768, 32767)
+                bytes[frame * 2] = sample.toByte()
+                bytes[frame * 2 + 1] = (sample shr 8).toByte()
+            }
+            voices.removeAll { it.offset >= it.pcm.size }
+            true
+        }
 
     private fun reportUnavailable(error: Throwable) {
         if (running.get()) {

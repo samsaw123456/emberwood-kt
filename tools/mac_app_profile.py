@@ -13,10 +13,12 @@ import sys
 import tempfile
 import time
 import zipfile
+from contextlib import ExitStack
 from pathlib import Path
 
 from diagnose_mac_output import default_output
 from mac_profile_observer import NativeStatus
+from mac_test_bridge import Controller
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,7 +40,7 @@ def tree_digest(root):
     return digest.hexdigest()
 
 
-def configure_app(app, tests, output, seconds):
+def configure_app(app, tests, output, seconds, input_socket):
     configs = list((app / "Contents/app").glob("*.cfg"))
     if len(configs) != 1:
         raise RuntimeError("Expected one native launcher configuration")
@@ -56,6 +58,7 @@ def configure_app(app, tests, output, seconds):
             "java-options=-XX:ActiveProcessorCount=2\n"
             f"java-options=-Daudit.root={ROOT}\n"
             f"java-options=-Daudit.python={sys.executable}\n"
+            f"java-options=-Daudit.inputSocket={input_socket}\n"
             f"java-options=-Dperformance.output={output}\n"
             f"java-options=-Dperformance.soakSeconds={seconds}"
         ),
@@ -79,6 +82,8 @@ def app_pid(native, app):
     at_index = native.sender(ctypes.c_void_p, ctypes.c_ulong)
     string = native.sender(ctypes.c_char_p)
     try:
+        # NSWorkspace's running-app list receives LaunchServices updates here.
+        native.pump_events(0.05)
         workspace = native.object(
             native.cls("NSWorkspace"), native.sel("sharedWorkspace")
         )
@@ -98,7 +103,26 @@ def app_pid(native, app):
         native.void(pool, native.sel("drain"))
 
 
-def launch_profile(app, output, timeout):
+def owned_app_pid(native, app, controller, known_pid):
+    """Kernel identity also works before LaunchServices publishes the new app."""
+    candidate = known_pid or controller.pid
+    if candidate is None:
+        candidate = app_pid(native, app)
+    if candidate is None:
+        return None
+    try:
+        executable = controller.windows.executable(candidate)
+    except RuntimeError:
+        # An exited child has no proc_pidpath. A live unidentified PID is never killed.
+        try:
+            os.kill(candidate, 0)
+        except ProcessLookupError:
+            return None
+        raise
+    return candidate if executable == controller.executable else None
+
+
+def launch_profile(app, output, timeout, controller):
     native = NativeStatus()
     process = None
     pid = None
@@ -130,8 +154,9 @@ def launch_profile(app, output, timeout):
                 elapsed = time.monotonic() - started
                 if elapsed > timeout:
                     raise TimeoutError("Native app profile did not finish in time")
-                pid = pid or app_pid(native, app)
+                pid = pid or controller.pid or app_pid(native, app)
                 if pid:
+                    controller.identify(pid)
                     row = native.sample_and_wait(pid)
                     if row.get("resident_set_kib") is not None:
                         rss_samples.append(row["resident_set_kib"])
@@ -155,8 +180,6 @@ def launch_profile(app, output, timeout):
             )
         if process.returncode:
             raise RuntimeError(f"LaunchServices exited with {process.returncode}")
-        if not pid:
-            raise RuntimeError("No native app PID was observed")
         completion = output / "completion.json"
         if not completion.is_file():
             raise RuntimeError("Native audit ended without its completion record")
@@ -165,19 +188,26 @@ def launch_profile(app, output, timeout):
             raise RuntimeError(
                 "Native performance audit failed; inspect completion.json"
             )
+        if not pid:
+            raise RuntimeError(
+                "Audit reported success but no native app PID was observed"
+            )
         return result
     finally:
         for kind, handler in previous.items():
             signal.signal(kind, handler)
         # Only the exact private bundle we launched can be terminated here.
-        owned = app_pid(native, app)
-        if owned and (pid is None or owned == pid):
+        owned = owned_app_pid(native, app, controller, pid)
+        if owned:
             try:
                 os.kill(owned, signal.SIGTERM)
                 deadline = time.monotonic() + 5
-                while app_pid(native, app) == owned and time.monotonic() < deadline:
+                while (
+                    owned_app_pid(native, app, controller, owned) == owned
+                    and time.monotonic() < deadline
+                ):
                     time.sleep(0.1)
-                if app_pid(native, app) == owned:
+                if owned_app_pid(native, app, controller, owned) == owned:
                     os.kill(owned, signal.SIGKILL)
             except ProcessLookupError:
                 pass  # The exact private process exited between lookup and signal.
@@ -225,10 +255,17 @@ def main():
         "jfr": "Not enabled: the unchanged shipped runtime has no jdk.jfr module",
         "result": "INCOMPLETE",
     }
-    with tempfile.TemporaryDirectory(prefix="emberwood native profile ") as temporary:
+    with (
+        tempfile.TemporaryDirectory(prefix="emberwood native profile ") as temporary,
+        ExitStack() as controllers,
+    ):
         app = Path(temporary).resolve() / "Emberwood Kotlin.app"
         subprocess.run(["ditto", original, app], check=True)
-        configure_app(app, tests, output, args.soak_seconds)
+        with (app / "Contents/Info.plist").open("rb") as stream:
+            evidence["native_launcher"] = plistlib.load(stream)["CFBundleExecutable"]
+        executable = app / "Contents/MacOS" / evidence["native_launcher"]
+        controller = controllers.enter_context(Controller(output, executable))
+        configure_app(app, tests, output, args.soak_seconds, controller.path)
         # Re-sign only the enclosing app: its already signed runtime stays identical.
         subprocess.run(["codesign", "--force", "--sign", "-", app], check=True)
         subprocess.run(["codesign", "--verify", "--deep", "--strict", app], check=True)
@@ -241,15 +278,15 @@ def main():
             != jar_digest
         ):
             raise RuntimeError("Production game JAR changed during diagnostic setup")
-        with (app / "Contents/Info.plist").open("rb") as stream:
-            evidence["native_launcher"] = plistlib.load(stream)["CFBundleExecutable"]
         evidence["copied_runtime_identical"] = True
         record = output / "native-app.json"
         record.write_text(json.dumps(evidence, indent=2) + "\n")
         try:
             evidence["audit_completion"] = launch_profile(
-                app, output, args.soak_seconds + 360
+                app, output, args.soak_seconds + 360, controller
             )
+            controller.close()
+            evidence["external_controller_cleanup"] = "PASS"
             evidence["result"] = "PASS"
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             evidence["result"] = "FAIL"

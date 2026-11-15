@@ -6,7 +6,8 @@ uses Apple's AudioToolbox output queue directly, without constructing a Java
 Sound mixer or enumerating input devices. The native default output is left to
 AudioToolbox; the game does not change device selection or microphone permissions.
 The failed Intel named-mixer experiment remains recorded in PERFORMANCE.md and
-its artifacts; this replacement still requires native startup and PCM evidence.
+its artifacts. Native evidence for the replacement is recorded below; the Intel
+GUI startup issue remains unresolved.
 
 The queue owns eight 512-byte buffers, at most 4096 bytes of application-managed
 PCM storage. Startup primes them with silence, starts playback, and confirms
@@ -25,7 +26,11 @@ own thread when no callback run loop is supplied.
 [AudioQueueNewOutput](https://developer.apple.com/documentation/audiotoolbox/audioqueuenewoutput(_:_:_:_:_:_:_:))
 documents that thread choice and creates a playback queue only.
 
-Mute discards queued audio with
+Mute clears queued voices immediately and coalesces a reset request for the
+existing audio thread. That thread resets the device before mixing its next
+block; a new cue added after the stop is retained. No native reset runs on the
+event thread, so a blocked device cannot hang a mute or menu action. The Mac
+backend discards queued audio with
 [AudioQueueReset](https://developer.apple.com/documentation/audiotoolbox/audioqueuereset(_:));
 `AudioQueueFlush` would instead ensure queued audio is played. A reset generation
 also discards a writer's pending pre-reset block. Disposal uses
@@ -41,6 +46,9 @@ keeps potentially blocked initialization/shutdown away from the event thread.
 backpressure/reset recovery, close while a writer is blocked, callbacks during
 synchronous disposal, partial allocation failure, invalid states, and exception
 containment through real Java FFM upcalls. The fake queue opens no hardware.
+The outer `AudioTest` regressions also cover a blocked reset without blocking
+Mute/Quit, asynchronous reset errors becoming explicitly unavailable, and
+preserving a new cue queued immediately after stop.
 
 On each Mac architecture, independently compare the installed SDK's ABI receipt
 with the JVM layouts before testing playback:
@@ -70,3 +78,25 @@ The actual game-window audit must additionally prove prompt-free startup and all
 14 M/Sound control cases using process-only captured PCM, inspect its waveform
 and continuity evidence, and close the installed app through its real interface.
 No native Mac pass is implied by compilation or the fake-queue tests.
+
+## Current native evidence
+
+Diagnostic run `43705516072`, JAR `bdba1782`, passed all SDK/JVM layout comparisons
+and three real queue lifecycle cycles per runtime on both Mac architectures.
+The ARM installed app starts without a permission dialog, and all 14 separate
+mute/menu activation cases pass with captured output on both the source and
+bundled runtimes. Those 168 recordings and six inspected waveform sheets remain
+under `build/ci-audioqueue-macos-arm/mac-output-diagnostic/`.
+
+Audio quality remains a separate check: two bundled ARM reference recordings
+contain three interior silence gaps of 21.75–43.44 ms. Capture timestamps are
+continuous at those locations, but the cause is not yet established. These PCM
+fixtures launch Java directly; they do not establish native app scheduling.
+`independent-review.md` and `continuity-review.json` retain the exact observations.
+
+On Intel, the standalone queue probes pass, but the actual game window still
+produces a microphone permission dialog and audio initialization remains pending.
+No permission was granted and the input guard sends no keys in this state.
+The next no-input diagnostic separates an empty window, the audio worker, ordered
+window/audio startup, and the concurrent production window; own-process Java and
+native stacks are captured before cleanup. The Intel game is not verified.

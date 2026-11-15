@@ -25,7 +25,7 @@ class AudioTest {
                     "open", "start" -> null
                     "write" -> {
                         writing.countDown()
-                        check(closed.await(5, TimeUnit.SECONDS))
+                        Thread.sleep(1)
                         args[2]
                     }
                     "flush" -> error("Output reset failed")
@@ -44,10 +44,141 @@ class AudioTest {
             Thread(mute, "audio-mute-regression").apply { isDaemon = true }.start()
             mute.get(2, TimeUnit.SECONDS)
             assertTrue(audio.muted)
+            assertTrue(closed.await(2, TimeUnit.SECONDS))
             assertEquals("Output reset failed", audio.unavailable)
-            assertTrue(closed.await(1, TimeUnit.SECONDS))
             assertFalse(audio.ready)
         } finally {
+            closed.countDown()
+            audio.close()
+        }
+    }
+
+    @Test
+    fun blockedResetDoesNotHoldMuteOrQuitAndCannotResumePlaybackAfterQuit() {
+        val writing = CountDownLatch(1)
+        val resetting = CountDownLatch(1)
+        val allowReset = CountDownLatch(1)
+        val closed = CountDownLatch(1)
+        val fullyReleased = CountDownLatch(1)
+        val closes = AtomicInteger()
+        val writes = AtomicInteger()
+        val device =
+            Proxy.newProxyInstance(
+                SourceDataLine::class.java.classLoader,
+                arrayOf(SourceDataLine::class.java),
+            ) { _, method, args ->
+                when (method.name) {
+                    "open", "start" -> null
+                    "write" -> {
+                        writes.incrementAndGet()
+                        writing.countDown()
+                        Thread.sleep(1)
+                        args[2]
+                    }
+                    "flush" -> {
+                        resetting.countDown()
+                        check(allowReset.await(5, TimeUnit.SECONDS))
+                        null
+                    }
+                    "close" -> {
+                        closed.countDown()
+                        if (closes.incrementAndGet() == 2) fullyReleased.countDown()
+                        null
+                    }
+                    "isOpen", "isRunning" -> closed.count != 0L
+                    else -> error("Unexpected audio operation: ${method.name}")
+                }
+            } as SourceDataLine
+        val audio = Audio { device }
+        try {
+            assertTrue(writing.await(2, TimeUnit.SECONDS))
+            val mute = FutureTask { audio.muted = true }
+            Thread(mute, "audio-blocked-reset-mute").apply { isDaemon = true }.start()
+            mute.get(2, TimeUnit.SECONDS)
+            assertTrue(resetting.await(2, TimeUnit.SECONDS))
+            val beforeClose = writes.get()
+            val closing = FutureTask { audio.close() }
+            Thread(closing, "audio-blocked-reset-close").apply { isDaemon = true }.start()
+            closing.get(2, TimeUnit.SECONDS)
+            assertTrue(closed.await(1, TimeUnit.SECONDS))
+            assertEquals(1L, allowReset.count, "The native reset is still blocked when Quit returns")
+            allowReset.countDown()
+            assertTrue(fullyReleased.await(2, TimeUnit.SECONDS), "The audio worker must finish after reset returns")
+            assertEquals(beforeClose, writes.get(), "A late reset must not resume output after Quit")
+            assertFalse(audio.ready)
+        } finally {
+            allowReset.countDown()
+            audio.close()
+        }
+    }
+
+    @Test
+    fun aCueRequestedAfterStopSurvivesConcurrentDeferredResets() {
+        val firstWrite = CountDownLatch(1)
+        val allowFirstWrite = CountDownLatch(1)
+        val resetting = CountDownLatch(1)
+        val allowReset = CountDownLatch(1)
+        val nextWrite = CountDownLatch(1)
+        val closed = CountDownLatch(1)
+        val resets = AtomicInteger()
+        val writes = AtomicInteger()
+        val prematureWrites = AtomicInteger()
+        var nextBlock = byteArrayOf()
+        val device =
+            Proxy.newProxyInstance(
+                SourceDataLine::class.java.classLoader,
+                arrayOf(SourceDataLine::class.java),
+            ) { _, method, args ->
+                when (method.name) {
+                    "open", "start" -> null
+                    "write" -> {
+                        if (writes.incrementAndGet() == 1) {
+                            firstWrite.countDown()
+                            check(allowFirstWrite.await(5, TimeUnit.SECONDS))
+                        } else if (resets.get() < 2) {
+                            prematureWrites.incrementAndGet()
+                        } else {
+                            val bytes = args[0] as ByteArray
+                            val offset = args[1] as Int
+                            nextBlock = bytes.copyOfRange(offset, offset + (args[2] as Int))
+                            nextWrite.countDown()
+                            check(closed.await(5, TimeUnit.SECONDS))
+                        }
+                        args[2]
+                    }
+                    "flush" -> {
+                        if (resets.incrementAndGet() == 1) {
+                            resetting.countDown()
+                            check(allowReset.await(5, TimeUnit.SECONDS))
+                        }
+                        null
+                    }
+                    "close" -> {
+                        closed.countDown()
+                        null
+                    }
+                    "isOpen", "isRunning" -> closed.count != 0L
+                    else -> error("Unexpected audio operation: ${method.name}")
+                }
+            } as SourceDataLine
+        val audio = Audio { device }
+        try {
+            assertTrue(firstWrite.await(2, TimeUnit.SECONDS))
+            audio.stop()
+            allowFirstWrite.countDown()
+            assertTrue(resetting.await(2, TimeUnit.SECONDS))
+            audio.stop()
+            audio.play("gem")
+            allowReset.countDown()
+            assertTrue(nextWrite.await(2, TimeUnit.SECONDS))
+            assertEquals(2, resets.get())
+            assertEquals(0, prematureWrites.get(), "A new cue must not be consumed ahead of the pending reset")
+            assertEquals(0.toByte(), nextBlock[0])
+            assertEquals(0.toByte(), nextBlock[1], "The cue must retain its initial zero-amplitude sample")
+            assertTrue(nextBlock.any { it != 0.toByte() }, "The cue added after Stop must reach the output")
+        } finally {
+            allowFirstWrite.countDown()
+            allowReset.countDown()
             closed.countDown()
             audio.close()
         }

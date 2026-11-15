@@ -33,6 +33,7 @@ jobs:
           printf 'JAVA_HOME=%s\n' "$java_home" >> "$GITHUB_ENV"
       - name: Check, build and package
         run: |
+          python3 -m unittest discover -s tools -p 'test_mac_bridge.py' -v
           ./gradlew --no-daemon check fatJar
           python3 tools/package_app.py --skip-build
       - name: Profile an isolated app through LaunchServices

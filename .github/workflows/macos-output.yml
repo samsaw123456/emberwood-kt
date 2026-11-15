@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   output:
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:

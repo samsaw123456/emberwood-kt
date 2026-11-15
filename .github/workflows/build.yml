@@ -84,7 +84,7 @@ jobs:
         run: ./gradlew --no-daemon nativeAudit
       - name: Validate installer on Linux
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
-        run: python3 -m unittest discover -s tools -p 'test_install.py' -v
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
       - name: Audit the packaged runtime on Linux
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.package.outcome == 'success' }}
         run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh python3 tools/audit_package.py
