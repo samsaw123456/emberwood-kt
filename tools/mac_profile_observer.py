@@ -53,6 +53,17 @@ class NativeStatus:
         error = ctypes.get_errno()
         return {"error": os.strerror(error)} if error else value
 
+    def resident_set_kib(self, pid):
+        result = subprocess.run(
+            ["/bin/ps", "-p", str(pid), "-o", "rss="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        value = result.stdout.strip()
+        return int(value) if result.returncode == 0 and value.isdecimal() else None
+
     def sample_and_wait(self, pid):
         started = time.monotonic()
         pool = self.object(self.cls("NSAutoreleasePool"), self.sel("new"))
@@ -75,6 +86,7 @@ class NativeStatus:
                 "frontmost_pid": front_pid,
                 "is_frontmost": front_pid == pid,
                 "nice": self.priority(0, pid),
+                "resident_set_kib": self.resident_set_kib(pid),
                 # XNU resource.h: PRIO_DARWIN_PROCESS=4; background result is 0x1000.
                 "darwin_process_policy": self.priority(4, pid),
             }
@@ -106,6 +118,7 @@ def observe(command, output, status_factory=NativeStatus):
     output.parent.mkdir(parents=True, exist_ok=True)
     failed = False
     started = time.monotonic()
+    rss_samples = []
     with output.open("w", buffering=1) as log:
         try:
             native = status_factory()
@@ -128,6 +141,8 @@ def observe(command, output, status_factory=NativeStatus):
                     try:
                         elapsed = time.monotonic() - started
                         row = native.sample_and_wait(process.pid)
+                        if row.get("resident_set_kib") is not None:
+                            rss_samples.append(row["resident_set_kib"])
                         row["elapsed_seconds"] = elapsed
                         log.write(json.dumps(row) + "\n")
                     except (OSError, RuntimeError) as error:
@@ -152,6 +167,9 @@ def observe(command, output, status_factory=NativeStatus):
                         "pid": process.pid,
                         "child_exit_code": result,
                         "observer_result": "UNVERIFIED" if failed else "PASS",
+                        "rss_sample_count": len(rss_samples),
+                        "peak_sampled_resident_set_kib": max(rss_samples, default=None),
+                        "rss_method": "Exact-PID one-second samples; not an OS high-water mark",
                     }
                 )
                 + "\n"

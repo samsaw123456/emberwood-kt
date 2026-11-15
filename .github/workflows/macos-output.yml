@@ -1,4 +1,4 @@
-name: Diagnose output-only Mac audio
+name: Verify production Mac audio
 on:
   workflow_dispatch:
 permissions:
@@ -21,11 +21,11 @@ jobs:
         run: |
           java_home=$(tools/bootstrap.sh)
           printf 'JAVA_HOME=%s\n' "$java_home" >> "$GITHUB_ENV"
-      - name: Check, build and package without launching the default mixer
+      - name: Check, build and package
         run: |
           ./gradlew --no-daemon check fatJar
           python3 tools/package_app.py --skip-build
-      - name: Observe native output-only startup and captured game PCM
+      - name: Observe production startup and captured game PCM
         run: python3 tools/diagnose_mac_output.py
       - name: Retain the actual diagnostic evidence
         if: always()

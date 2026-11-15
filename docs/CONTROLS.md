@@ -13,6 +13,13 @@ Automatic assertions, visual inspection and audio-output verification are
 recorded separately in the coverage TSV and [verification record](VERIFICATION.md).
 A failed or unfinished final-build rerun does not inherit a previous build's pass.
 
+Before sending input, native audits require audio initialization to finish or
+report an explicit unavailable result. A still-pending initialization aborts
+within 15 seconds. On macOS a read-only accessibility check additionally requires
+the ordinary game window with no modal alert or attached sheet; Java focus flags
+alone are insufficient. These checks never approve a permission dialog. Missing
+audio remains unverified by the separate output audit.
+
 | Physical binding | State / expected effect |
 | --- | --- |
 | A, Left arrow (separately) | Playing: move and face left; release brakes |

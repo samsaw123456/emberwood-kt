@@ -12,7 +12,8 @@ class PhysicalKeys(
 ) : AutoCloseable {
     private val started = System.nanoTime()
     private val process =
-        ProcessBuilder("python3", "tools/physical_key.py", "--serve")
+        NativeAuditTools
+            .python("tools/physical_key.py", "--serve")
             .redirectError(ProcessBuilder.Redirect.INHERIT)
             .apply {
                 if (trace != null) environment()["EMBERWOOD_PHYSICAL_TRACE"] = trace.toAbsolutePath().toString()

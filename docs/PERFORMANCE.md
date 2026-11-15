@@ -9,18 +9,29 @@ performance scenes, not evidence of completing those levels through input.
 Run it after `./gradlew check fatJar`, using Java 25:
 
 ```sh
-env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a \
+env -u WAYLAND_DISPLAY XDG_SESSION_TYPE=x11 xvfb-run -a tools/run_x11_audit.sh \
   "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED \
   -Xms32m -Xmx128m -XX:ActiveProcessorCount=2 \
   -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test \
   emberwood.PerformanceAudit
 ```
 
-On a real desktop, omit the `env ... xvfb-run -a` prefix. The X11 environment is
+On a real desktop, omit the `env ... tools/run_x11_audit.sh` prefix. The isolated
+X11 setup needs Xvfb, Openbox and `xprop`; native keyboard injection uses Python 3
+and the platform's input APIs. The X11 environment is
 necessary when using Xvfb from a Wayland session, so Java's Robot captures the
 isolated X11 display instead of opening a desktop screencast portal. The audit
 uses synchronous painting and a screen capture; `Robot.waitForIdle()` would wait
 behind continuous animation and distort command timing.
+
+Keyboard injection runs through the shared persistent `PhysicalKeys` helper,
+separately from AWT's X11 lock; independent AWT event receipts still establish
+when the core commands arrive. Robot captures the actual displayed frames.
+Before starting the measurement or sending any physical input, the audit waits
+for audio initialization to resolve. A pending provider aborts with no input.
+On macOS it also requires a native, nonmodal game window belonging to the exact
+process. These checks prevent automation from interacting with an unexpected
+permission prompt.
 
 The default soak is 180 seconds, including all four platform CI jobs.
 `-Dperformance.soakSeconds=30` is available for a shorter diagnostic run; it does
@@ -29,6 +40,14 @@ not replace the full soak. Results, screenshots and their limits are written und
 `/usr/bin/time -v` on Linux. A 128 MiB Java heap limit does not mean the complete
 process uses 128 MiB. `ActiveProcessorCount=2` limits JVM parallelism; it does not
 emulate a particular older processor or cap its clock speed.
+
+`completion.json` is the authoritative finish record, with `result`,
+`measured_windows`, `soak_seconds`, `failed_scenes`, `failures` and `exception`.
+It is cleared before each run, then written after input/window cleanup and
+measurement export. PASS requires all 22 windows and no failed assertion or
+exception. A missing record means the audit did not complete. This is essential
+for the isolated macOS application probe because LaunchServices' successful
+`open -W` status alone does not establish the Java audit's result.
 
 The audit requires at least 45 painted frames/second, mean painting within a
 16.67 ms frame budget, and simulation progress at least 90% of wall time. Static
@@ -188,8 +207,12 @@ more than 65 pixels from its own observed starting position, with left-release
 recovery additionally requiring zero horizontal velocity. It still excludes the
 world wall (`x > 40`), so reaching a
 boundary cannot masquerade as braking. `core-positions.tsv` retains the initial,
-right-release, pre-left and stopped positions. This further correction awaits
-the next native rerun; resource thresholds and sustained input are unchanged.
+right-release, pre-left and stopped positions. The fifth native Linux run passed
+the corrected core loop and all 22 measurements on both architectures: its soak
+was 62.118 frames/s at 1.703 ms mean paint on x86-64, and 62.196 frames/s at
+1.681 ms on ARM64. Evidence is retained under
+`build/ci-fifth-linux-x64/build/performance/` and
+`build/ci-fifth-linux-arm/build/performance/`.
 
 Linux CI had no audio device; actual audio output is tested separately on the
 local PipeWire desktop. The native CI artifacts are under

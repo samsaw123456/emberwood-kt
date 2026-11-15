@@ -104,6 +104,7 @@ object CampaignAudit {
                     },
                 )
             }
+            NativeInputGate.awaitReady(checkNotNull(panel).audio, output)
             robot.delay(600)
             snap("title")
             key(KeyEvent.VK_ENTER, true)

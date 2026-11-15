@@ -7,8 +7,7 @@ fixed-step physics, double jump, dash, checkpoint gear/retry, moving/crumbling
 platforms, secret discovery, gated progression, pause, settings and ending.
 The removed chests, bonus shields and following companion must remain absent.
 
-Other Codex sessions supplied quality requirements, not racing or terminal-game
-features: current stable Kotlin/Gradle and Java25; simple fresh-install onboarding;
+Quality requirements: current stable Kotlin/Gradle and Java25; simple fresh-install onboarding;
 private dependency bootstrap/bundled runtime; no account or network needed to
 play; adversarial reviews and repeated actual playtesting; external evidence of
 every physical command (including alternate keys), focus/release and audio;

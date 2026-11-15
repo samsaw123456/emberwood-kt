@@ -19,7 +19,8 @@ def require_game_window(pid):
         raise NativeFocusUnavailable(
             "Accessibility read access is unavailable; no consent prompt or input was sent"
         )
-    services.AXUIElementCreateSystemWide.restype = ctypes.c_void_p
+    services.AXUIElementCreateApplication.argtypes = [ctypes.c_int]
+    services.AXUIElementCreateApplication.restype = ctypes.c_void_p
     services.AXUIElementGetPid.argtypes = [
         ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_int),
@@ -103,15 +104,13 @@ def require_game_window(pid):
         finally:
             core.CFRelease(item)
 
-    system = services.AXUIElementCreateSystemWide()
-    if not system:
+    # Query only the known game. The system-wide focused-app bridge fails with
+    # kAXErrorCannotComplete on hosted Macs even when AX access is already trusted.
+    app = services.AXUIElementCreateApplication(pid)
+    if not app:
         raise NativeFocusUnavailable(
-            "Focused-application lookup is unavailable; no input was sent"
+            "Game application lookup is unavailable; no input was sent"
         )
-    try:
-        app = attribute(system, "AXFocusedApplication")
-    finally:
-        core.CFRelease(system)
     window = None
     try:
         focused_pid = ctypes.c_int()
@@ -122,6 +121,7 @@ def require_game_window(pid):
             )
         window = attribute(app, "AXFocusedWindow")
         state = {
+            "frontmost": value(app, "AXFrontmost", "bool"),
             "role": value(window, "AXRole", "text"),
             "subrole": value(window, "AXSubrole", "text"),
             "title": value(window, "AXTitle", "text"),
@@ -129,6 +129,7 @@ def require_game_window(pid):
             "attached_sheets": value(window, "AXSheets", "array", optional=True) or 0,
         }
         if state != {
+            "frontmost": True,
             "role": "AXWindow",
             "subrole": "AXStandardWindow",
             "title": "Emberwood Kotlin",

@@ -95,14 +95,28 @@ the Java default mixer's eager input-device query is being investigated with an
 output-only diagnostic. No microphone access was granted. Neither Mac build is fully verified
 while its performance and control audits remain failed.
 
-The next Mac run also compiles a test-only ScreenCaptureKit helper and checks the
-same fourteen mute and Sound-menu cases against both source and packaged Java.
+Manual run `43703482967` tested the exact native default output's Java mixer name
+with the `ce6f5af4` audio lifecycle build. Apple Silicon startup was visibly
+prompt-free and audio initialization completed, but the read-only global
+accessibility lookup stopped PCM controls before any input. Intel still displayed
+the microphone dialog with its exact `Null Audio Device` name; both audio fixtures
+timed out before input. The named-mixer experiment is therefore insufficient and
+is not a shipped workaround. The next manual diagnostic exercises the production
+output backend directly, with no mixer override, and uses a scoped game-PID
+accessibility lookup before physical input. The failed runs and full startup
+images remain in `build/ci-output-macos-{arm,intel}/mac-output-diagnostic/`.
+
+Mac run `43700719691` compiled a test-only ScreenCaptureKit helper and passed the
+same fourteen mute and Sound-menu cases against both source and packaged Java
+on Apple Silicon, at the prior `82e43cb9` game build. The actual WAVs were inspected;
+short interior gaps remain under investigation, so this is control-output proof
+rather than a claim of perfect audio quality. Intel capture remains unverified.
 The filter contains only the launched game's process, with microphone capture
 disabled and no system-mix fallback. `tools/macos_audio_facility.py` first reports
 existing capture availability without requesting consent or changing permissions.
 The actual helper may request normal macOS consent; missing consent or incomplete
-PCM remains explicitly unverified. These checks are pending native execution,
-not established by the Python routing checks on Linux.
+PCM remains explicitly unverified. The final audio lifecycle build must repeat
+these native checks; Python routing checks on Linux do not establish Mac behavior.
 
 ## Actual Linux package and launcher checks
 
@@ -126,7 +140,7 @@ the title and paused screen were inspected. A repeat under an isolated Openbox
 window manager pressed physical Alt+F4 and verified that the installed process
 exited. The original **Emberwood** desktop entry
 and repository remain unchanged. Local evidence is in `build/installed-audit/`,
-`build/installed-user-audit/`, `build/installed-physical-close-82e43cb9-repeat.log`, and
-`build/package-install-82e43cb9.log`. This installed candidate matches the checked
+`build/installed-user-audit/`, `build/installed-physical-close-ce6f5af4.log`, and
+`build/package-install-ce6f5af4.log`. This installed candidate matches the checked
 game JAR SHA-256
-`82e43cb9b6ff80cf03bc581bdb58a9675de78d9fef8a5b49ddf8a27501efff37`.
+`ce6f5af4fba0455e977936eead904e24608083fc8b256d4d07b406aaddbd3bf8`.

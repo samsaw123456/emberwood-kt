@@ -18,10 +18,10 @@ import kotlin.math.max
 object PerformanceAudit {
     @JvmStatic
     fun main(args: Array<String>) {
-        require(args.isEmpty()) { "Configure with -Dperformance.output and -Dperformance.soakSeconds, not command arguments." }
         Audit(
             Path.of(System.getProperty("performance.output", "build/performance")),
-            System.getProperty("performance.soakSeconds", "180").toDouble(),
+            System.getProperty("performance.soakSeconds", "180"),
+            args,
         ).run()
     }
 
@@ -39,9 +39,12 @@ object PerformanceAudit {
 
     private class Audit(
         private val output: Path,
-        private val soakSeconds: Double,
+        private val soakText: String,
+        private val arguments: Array<String>,
     ) {
-        private val robot = Robot().apply { autoDelay = 3 }
+        private var soakSeconds = Double.NaN
+        private lateinit var robot: Robot
+        private lateinit var physicalKeys: PhysicalKeys
         private val process = ProcessHandle.current()
         private val runtime = Runtime.getRuntime()
         private val keys = mutableSetOf<Int>()
@@ -55,10 +58,16 @@ object PerformanceAudit {
         private lateinit var panel: GamePanel
 
         fun run() {
-            require(soakSeconds.isFinite() && soakSeconds >= 30 && soakSeconds <= 1800)
             Files.createDirectories(output)
+            Files.deleteIfExists(output.resolve("completion.json"))
             val preferences = Files.createTempDirectory("emberwood-performance-")
+            var unexpectedFailure: Throwable? = null
             try {
+                require(arguments.isEmpty()) {
+                    "Configure with -Dperformance.output and -Dperformance.soakSeconds, not command arguments."
+                }
+                soakSeconds = soakText.toDouble()
+                require(soakSeconds.isFinite() && soakSeconds >= 30 && soakSeconds <= 1800)
                 edt {
                     val opened = openWindow(Settings(preferences))
                     window = opened.first
@@ -71,6 +80,9 @@ object PerformanceAudit {
                         },
                     )
                 }
+                NativeInputGate.awaitReady(panel.audio, output)
+                robot = Robot().apply { autoDelay = 3 }
+                physicalKeys = PhysicalKeys(output.resolve("physical-key-delivery.jsonl"))
                 robot.delay(1000)
                 screenshot("title-before")
                 measure("title-idle", "idle", 6.0)
@@ -112,6 +124,7 @@ object PerformanceAudit {
                 screenshot("soak-after")
                 verify(liveAfter - liveBefore < 16L * 1024 * 1024, "Retained heap grew by more than 16 MiB during the soak")
                 verify(edt { panel.game.state == GameState.PLAYING && panel.game.deaths == 0 }, "Soak unexpectedly died or left gameplay")
+                verify(rows.size == 22, "Audit did not complete all 22 measurement windows")
                 val maximumHeap = Runtime.getRuntime().maxMemory()
                 verify(maximumHeap <= 144L * 1024 * 1024, "Audit was not launched with the required 128 MiB heap limit")
                 verify(Runtime.getRuntime().availableProcessors() <= 2, "Audit was not launched with ActiveProcessorCount=2")
@@ -138,7 +151,7 @@ object PerformanceAudit {
                         appendLine("Live heap before/after soak bytes: $liveBefore / $liveAfter")
                         appendLine("Soak seconds: $soakSeconds")
                         appendLine("Scene fixtures load original terrain and position the fox; boss fixtures grant acorns and armor.")
-                        appendLine("Core play and the soak use Robot keys. Fixtures do not count as campaign/control coverage.")
+                        appendLine("Core play and the soak use native OS keys. Fixtures do not count as campaign/control coverage.")
                         appendLine("CPU is process CPU divided by wall time; 100% means one fully occupied core.")
                         appendLine("Limits: active scenes >=45 painted frames/s, mean paint <=16.67 ms, simulation >=90% of wall time.")
                         appendLine("Idle limits: <=2 painted frames/s, zero simulation progress; heap drift <=16 MiB after collection.")
@@ -146,32 +159,65 @@ object PerformanceAudit {
                         failures.forEach { appendLine(it) }
                     },
                 )
+            } catch (error: Throwable) {
+                unexpectedFailure = error
             } finally {
-                releaseKeys()
-                if (::window.isInitialized) edt { window.dispose() }
-                Files.writeString(
-                    output.resolve("measurements.tsv"),
-                    "Scene\tMethod\tWall seconds\tSimulation seconds\tProcess CPU percent\tPainted frames/s\t" +
-                        "Mean paint ms\tPeak sampled heap bytes\tPeak shots\tPeak particles\tResult\n" +
-                        rows.joinToString("\n") + "\n",
-                )
-                Files.writeString(
-                    output.resolve("core-input-latency.tsv"),
-                    "Action\tMilliseconds\tResult\n" + coreTimings.joinToString("\n") + "\n",
-                )
-                Files.writeString(
-                    output.resolve("window-focus.tsv"),
-                    "Scene\tPhase\tVisible\tActive\tWindow focused\tPanel focused\tResult\n" +
-                        focusObservations.joinToString("\n") + "\n",
-                )
-                Files.writeString(
-                    output.resolve("core-positions.tsv"),
-                    "Moment\tX\tY\tHorizontal speed\tGrounded\n" + corePositions.joinToString("\n") + "\n",
-                )
-                preferences.toFile().deleteRecursively()
+                fun finish(action: () -> Unit) {
+                    try {
+                        action()
+                    } catch (error: Throwable) {
+                        val previous = unexpectedFailure
+                        if (previous == null) unexpectedFailure = error else previous.addSuppressed(error)
+                    }
+                }
+                finish { if (::physicalKeys.isInitialized) physicalKeys.close() }
+                keys.clear()
+                finish { if (::window.isInitialized) edt { window.dispose() } }
+                finish { writeMeasurements() }
+                finish { check(preferences.toFile().deleteRecursively()) { "Could not remove isolated performance preferences" } }
+                writeCompletion(unexpectedFailure)
             }
+            unexpectedFailure?.let { throw it }
             check(failures.isEmpty()) { failures.joinToString("\n") }
             println("Performance audit passed: ${rows.size} measured windows, $soakSeconds-second input soak. See $output")
+        }
+
+        private fun writeMeasurements() {
+            Files.writeString(
+                output.resolve("measurements.tsv"),
+                "Scene\tMethod\tWall seconds\tSimulation seconds\tProcess CPU percent\tPainted frames/s\t" +
+                    "Mean paint ms\tPeak sampled heap bytes\tPeak shots\tPeak particles\tResult\n" +
+                    rows.joinToString("\n") + "\n",
+            )
+            Files.writeString(
+                output.resolve("core-input-latency.tsv"),
+                "Action\tMilliseconds\tResult\n" + coreTimings.joinToString("\n") + "\n",
+            )
+            Files.writeString(
+                output.resolve("window-focus.tsv"),
+                "Scene\tPhase\tVisible\tActive\tWindow focused\tPanel focused\tResult\n" +
+                    focusObservations.joinToString("\n") + "\n",
+            )
+            Files.writeString(
+                output.resolve("core-positions.tsv"),
+                "Moment\tX\tY\tHorizontal speed\tGrounded\n" + corePositions.joinToString("\n") + "\n",
+            )
+        }
+
+        private fun writeCompletion(error: Throwable?) {
+            val failedScenes = rows.filter { it.endsWith("\tFAIL") }.map { it.substringBefore('\t') }
+            val result = if (error == null && failures.isEmpty() && rows.size == 22) "PASS" else "FAIL"
+            Files.writeString(
+                output.resolve("completion.json"),
+                "{\n" +
+                    "  \"result\": ${jsonString(result)},\n" +
+                    "  \"measured_windows\": ${rows.size},\n" +
+                    "  \"soak_seconds\": ${if (soakSeconds.isFinite()) soakSeconds else "null"},\n" +
+                    "  \"failed_scenes\": ${failedScenes.joinToString(prefix = "[", postfix = "]", transform = ::jsonString)},\n" +
+                    "  \"failures\": ${failures.joinToString(prefix = "[", postfix = "]", transform = ::jsonString)},\n" +
+                    "  \"exception\": ${error?.let { jsonString(it.stackTraceToString()) } ?: "null"}\n" +
+                    "}\n",
+            )
         }
 
         private fun physicalCoreLoop() {
@@ -416,13 +462,12 @@ object PerformanceAudit {
         }
 
         private fun desiredKeys(desired: Set<Int>) {
-            for (key in keys.toList()) {
-                if (key !in desired) {
-                    robot.keyRelease(key)
-                    keys.remove(key)
-                }
-            }
-            for (key in desired) if (keys.add(key)) robot.keyPress(key)
+            val changed =
+                (keys - desired).map { PhysicalKeys.name(it) to false } +
+                    (desired - keys).map { PhysicalKeys.name(it) to true }
+            if (changed.isNotEmpty()) physicalKeys.send(*changed.toTypedArray())
+            keys.clear()
+            keys.addAll(desired)
         }
 
         private fun releaseKeys() = desiredKeys(emptySet())
@@ -445,6 +490,20 @@ object PerformanceAudit {
         }
 
         private fun decimal(number: Double) = String.format(Locale.ROOT, "%.3f", number)
+
+        private fun jsonString(value: String): String =
+            buildString {
+                append('"')
+                for (character in value) {
+                    when {
+                        character == '"' -> append("\\\"")
+                        character == '\\' -> append("\\\\")
+                        character < ' ' -> append("\\u${character.code.toString(16).padStart(4, '0')}")
+                        else -> append(character)
+                    }
+                }
+                append('"')
+            }
 
         private fun <T> edt(action: () -> T): T {
             var value: Any? = null

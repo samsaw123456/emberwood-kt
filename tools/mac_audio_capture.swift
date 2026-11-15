@@ -15,10 +15,34 @@ enum CaptureFailure: Error, CustomStringConvertible {
     }
 }
 
+struct BufferTiming: Codable {
+    let presentationSeconds: Double?
+    let declaredFrames: Int
+    let availableFrames: Int
+    let retainedFrames: Int
+    let pcmStartFrame: Int
+    let sampleRate: Double
+    let channels: UInt32
+    let deltaFromExpectedSeconds: Double?
+}
+
+struct CaptureTiming: Codable {
+    let bufferCount: Int
+    let minimumBufferFrames: Int?
+    let maximumBufferFrames: Int?
+    let timestampGapCount: Int
+    let timestampOverlapCount: Int
+    let missingTimestampCount: Int
+    let comparisonToleranceSeconds: Double
+    let buffers: [BufferTiming]
+}
+
 final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     let queue = DispatchQueue(label: "org.emberwood.audio-audit")
     var samples: [Int16] = []
     var failure: String?
+    var timings: [BufferTiming] = []
+    var expectedPresentation: Double?
     let count = 96_000
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -64,7 +88,18 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             let buffers = UnsafeMutableAudioBufferListPointer(list)
             guard let first = buffers.first, let data = first.mData, first.mNumberChannels > 0 else { return }
             let stride = Int(first.mNumberChannels)
-            let frames = min(Int(first.mDataByteSize) / MemoryLayout<Float>.size / stride, count - samples.count)
+            let available = Int(first.mDataByteSize) / MemoryLayout<Float>.size / stride
+            let frames = min(available, count - samples.count)
+            let declared = CMSampleBufferGetNumSamples(buffer)
+            let pts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(buffer))
+            let timestamp = pts.isFinite ? pts : nil
+            let delta = timestamp.flatMap { current in expectedPresentation.map { current - $0 } }
+            timings.append(BufferTiming(
+                presentationSeconds: timestamp, declaredFrames: declared,
+                availableFrames: available, retainedFrames: frames, pcmStartFrame: samples.count,
+                sampleRate: info.mSampleRate, channels: info.mChannelsPerFrame,
+                deltaFromExpectedSeconds: delta))
+            expectedPresentation = timestamp.map { $0 + Double(declared) / info.mSampleRate }
             let values = data.assumingMemoryBound(to: Float.self)
             for frame in 0..<frames {
                 let value = values[frame * stride]
@@ -80,7 +115,22 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     func save(to url: URL) throws {
         var pcm: [Int16] = []
         var issue: String?
-        queue.sync { pcm = samples; issue = failure }
+        var observed: [BufferTiming] = []
+        queue.sync { pcm = samples; issue = failure; observed = timings }
+        let tolerance = 0.5 / 48_000.0
+        let timing = CaptureTiming(
+            bufferCount: observed.count,
+            minimumBufferFrames: observed.map(\.availableFrames).min(),
+            maximumBufferFrames: observed.map(\.availableFrames).max(),
+            timestampGapCount: observed.filter { ($0.deltaFromExpectedSeconds ?? 0) > tolerance }.count,
+            timestampOverlapCount: observed.filter { ($0.deltaFromExpectedSeconds ?? 0) < -tolerance }.count,
+            missingTimestampCount: observed.filter { $0.presentationSeconds == nil }.count,
+            comparisonToleranceSeconds: tolerance, buffers: observed)
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(timing).write(
+            to: url.deletingPathExtension().appendingPathExtension("timing.json"), options: .atomic)
         if let issue { throw CaptureFailure.unavailable(issue) }
         guard pcm.count == count else {
             throw CaptureFailure.unavailable("Only \(pcm.count) of \(count) PCM frames arrived; output remains unverified")

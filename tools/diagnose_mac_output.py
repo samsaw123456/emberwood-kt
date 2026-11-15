@@ -1,4 +1,4 @@
-"""Test the exact native default output without probing or granting microphone access."""
+"""Test production Mac output without mixer overrides or microphone access."""
 
 import argparse
 import ctypes
@@ -138,25 +138,11 @@ def main():
     ) as temporary:
         app = Path(temporary) / "Emberwood Kotlin.app"
         subprocess.run(["ditto", original, app], check=True)
-        configs = list((app / "Contents/app").glob("*.cfg"))
-        if len(configs) != 1:
-            raise RuntimeError("Expected exactly one native launcher configuration")
-        config = configs[0]
-        text = config.read_text()
-        if text.count("[JavaOptions]") != 1:
-            raise RuntimeError("Native launcher JavaOptions section is unavailable")
-        option = (
-            f"java-options=-Djavax.sound.sampled.SourceDataLine=#{selected['name']}"
-        )
-        config.write_text(text.replace("[JavaOptions]", f"[JavaOptions]\n{option}"))
-        subprocess.run(
-            ["codesign", "--force", "--deep", "--sign", "-", app], check=True
-        )
         subprocess.run(["codesign", "--verify", "--deep", "--strict", app], check=True)
         jar = app / "Contents/app/emberwood-kotlin.jar"
         runtime = app / "Contents/runtime/Contents/Home/bin/java"
         selected["game_jar_sha256"] = hashlib.sha256(jar.read_bytes()).hexdigest()
-        selected["launcher_diagnostic_option"] = option
+        selected["audio_selection"] = "Unmodified production backend; no mixer override"
         (output / "output-device.json").write_text(
             json.dumps(selected, indent=2) + "\n"
         )
@@ -174,8 +160,6 @@ def main():
                 ROOT / "tools/mac_audio_audit.py",
                 "--output",
                 output / "audio-source",
-                "--output-mixer",
-                selected["name"],
             ],
             "packaged-pcm": [
                 sys.executable,
@@ -186,8 +170,6 @@ def main():
                 runtime,
                 "--jar",
                 jar,
-                "--output-mixer",
-                selected["name"],
             ],
         }
         for label, command in commands.items():

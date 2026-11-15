@@ -92,6 +92,7 @@ private class NativeAudit(
                 }
             }
             robot.delay(700)
+            NativeInputGate.awaitReady(panel.audio, output)
             directionCases()
             gentleCameraDirections()
             jumpCases()
