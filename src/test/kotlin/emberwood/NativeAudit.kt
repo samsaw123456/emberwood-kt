@@ -1,6 +1,5 @@
 package emberwood
 
-import java.awt.Color
 import java.awt.Graphics
 import java.awt.RenderingHints
 import java.awt.Robot
@@ -37,7 +36,7 @@ private class NativeAudit(
     private val evidence = mutableListOf<String>()
     private val pendingImages = mutableListOf<Pair<String, BufferedImage>>()
     private val presentationTimings = mutableListOf<String>()
-    private var presentationMarker = Color(251, 0, 4)
+    private var presentationNonce = 65535
 
     private data class Delivery(
         val count: Int,
@@ -112,8 +111,7 @@ private class NativeAudit(
                         ) = false
 
                         override fun paintComponent(graphics: Graphics) {
-                            graphics.color = presentationMarker
-                            graphics.fillRect(8, 8, 6, 6)
+                            PresentationMarker.paint(graphics, presentationNonce)
                         }
                     }
                 frame.glassPane.isVisible = true
@@ -139,6 +137,8 @@ private class NativeAudit(
             delay(700)
             NativeInputGate.awaitReady(panel.audio, output)
             pointer = PhysicalPointer(robot)
+            // Refuse an unavailable capture facility before attempting hundreds of controls.
+            snap("presentation-startup")
             directionCases()
             gentleCameraDirections()
             jumpCases()
@@ -309,10 +309,10 @@ private class NativeAudit(
     ): BufferedImage {
         // waitForIdle repeatedly waits for this continuously animated window and extends held input.
         val started = System.nanoTime()
-        val marker = Color(251, (sequence * 37) % 250 + 1, 4)
+        val nonce = sequence
         edt {
             observe()
-            presentationMarker = marker
+            presentationNonce = nonce
             frame.rootPane.paintImmediately(0, 0, frame.rootPane.width, frame.rootPane.height)
         }
         java.awt.Toolkit
@@ -334,7 +334,7 @@ private class NativeAudit(
             }
         var image = capture()
         await("Desktop presentation for $label") {
-            if ((image.getRGB(10, 10) and 0xffffff) == (marker.rgb and 0xffffff)) {
+            if (PresentationMarker.matches(image, nonce)) {
                 true
             } else {
                 image = capture()
