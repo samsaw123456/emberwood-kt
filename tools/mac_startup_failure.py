@@ -194,6 +194,11 @@ class ErrorDialogReader(MenuReader):
             state["buttons"].append(
                 {
                     "title": self.scalar(element, "AXTitle", "text", optional=True),
+                    # JDK's ButtonAccessibility exposes accessibilityLabel, whose
+                    # public AX attribute is AXDescription, rather than AXTitle.
+                    "description": self.scalar(
+                        element, "AXDescription", "text", optional=True
+                    ),
                     "subrole": self.scalar(element, "AXSubrole", "text", optional=True),
                     "enabled": self.scalar(element, "AXEnabled", "bool"),
                 }
@@ -215,14 +220,26 @@ class ErrorDialogReader(MenuReader):
 
 def validate_dialog(state):
     texts = [" ".join(text.split()) for text in state["texts"]]
-    content_buttons = [button for button in state["buttons"] if button["title"]]
+    chrome = {"AXCloseButton", "AXZoomButton", "AXMinimizeButton"}
+    content_buttons = [
+        button for button in state["buttons"] if button.get("subrole") not in chrome
+    ]
+    labels = (
+        {
+            value
+            for key in ("title", "description")
+            if (value := content_buttons[0].get(key))
+        }
+        if len(content_buttons) == 1
+        else set()
+    )
     if (
         state["frontmost"] is not True
         or state["role"] != "AXWindow"
         or state["title"] != ERROR_TITLE
         or ERROR_MESSAGE not in texts
         or len(content_buttons) != 1
-        or content_buttons[0]["title"] != "OK"
+        or labels != {"OK"}
         or content_buttons[0]["enabled"] is not True
     ):
         raise RuntimeError(

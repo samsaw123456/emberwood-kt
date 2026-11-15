@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from mac_startup_failure import (
     ERROR_MESSAGE,
     ERROR_TITLE,
+    ErrorDialogReader,
     ExitStatus,
     acknowledge_error,
     await_error,
@@ -95,6 +96,48 @@ def app_fixture(path):
 
 
 class StartupFailureTests(unittest.TestCase):
+    def test_swing_button_label_is_read_without_accepting_unnamed_or_conflicting_buttons(
+        self,
+    ):
+        # The actual ARM raw tree has an untitled content button plus named
+        # chrome subroles. JDK's accessibleLabel must be decoded separately.
+        values = {
+            "AXRole": "AXButton",
+            "AXTitle": None,
+            "AXDescription": "OK",
+            "AXSubrole": None,
+            "AXEnabled": True,
+        }
+        reader = object.__new__(ErrorDialogReader)
+        reader.scalar = lambda _element, name, _kind, **_kwargs: values[name]
+        state = dialog()
+        state.update(buttons=[], nodes=0)
+        reader.read_nodes(17, state, 0)
+        self.assertEqual(state["buttons"][0]["description"], "OK")
+        self.assertIsNone(state["buttons"][0]["title"])
+        state["buttons"].extend(
+            {"title": None, "description": name, "subrole": subrole, "enabled": enabled}
+            for name, subrole, enabled in (
+                ("close", "AXCloseButton", True),
+                ("zoom", "AXZoomButton", False),
+                ("minimize", "AXMinimizeButton", False),
+            )
+        )
+        validate_dialog(state)
+        for changed in (
+            {"description": None},
+            {"description": "Allow"},
+            {"title": "Cancel"},
+            {"enabled": False},
+        ):
+            with self.subTest(changed=changed):
+                candidate = {**state, "buttons": [{**state["buttons"][0], **changed}]}
+                with self.assertRaises(RuntimeError):
+                    validate_dialog(candidate)
+        state["buttons"].append({"title": None, "description": None, "enabled": True})
+        with self.assertRaises(RuntimeError):
+            validate_dialog(state)
+
     def test_rejected_native_dialog_fields_are_retained_before_any_input(self):
         state = dialog()
         state["texts"] = []
