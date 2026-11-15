@@ -14,8 +14,8 @@ choose `aarch64` or `arm64`.
 - **Ubuntu or Debian:** open the `.deb` file and choose Install. The system installer
   supplies any missing desktop libraries. Open **Emberwood Kotlin** in Applications.
 - **Other Linux desktops:** extract the Linux `.tar.gz`, then run **Install Emberwood
-  Kotlin.command** inside it. The application is installed for your user, with no
-  administrator access. You can also run `Emberwood Kotlin/bin/emberwood-kotlin`
+  Kotlin.command** inside it. The application is installed for your user.
+  You can also run `Emberwood Kotlin/bin/emberwood-kotlin`
   directly from the extracted folder.
 - **macOS:** extract the matching ZIP: `aarch64` for Apple Silicon, `x86_64` for Intel.
   Move **Emberwood Kotlin.app** to Applications, or double-click **Install Emberwood
@@ -23,8 +23,12 @@ choose `aarch64` or `arm64`.
   build is ad-hoc signed, not Apple-notarized; macOS may require **Open Anyway** in
   Privacy & Security after your first launch attempt.
 
+The Linux installer and launchers check desktop libraries. On Ubuntu/Debian they
+install missing packages with normal administrator authorization. Other Linux
+distributions get the missing library names and recovery instructions.
+
 The app includes its own Java runtime. You do not need Java, Gradle, Python, Zed,
-or an account to play. After downloading, it works offline. Replacing the app
+or an account to play. After installation, it works offline. Replacing the app
 keeps your settings. The original **Emberwood** launcher stays available too.
 
 ## Controls

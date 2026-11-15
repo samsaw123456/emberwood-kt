@@ -53,7 +53,19 @@ Debian packages should be removed with the package manager instead.
 
 Linux requires a desktop with X11/XWayland and ordinary font/audio libraries.
 Debian packages declare those dependencies for automatic resolution by the
-system installer. Portable archives assume those desktop libraries are present.
+system installer. The portable installer, direct app launcher and source GUI
+launcher also share `tools/ensure_linux_desktop.sh`. It checks the actual AWT,
+font and audio libraries with the private runtime's library paths, including
+Fontconfig, which Java loads dynamically. Healthy desktops install nothing.
+When a known library is missing and `apt-get` is available, only its required
+packages are installed using normal root, sudo or PolicyKit authorization, then
+the libraries are checked again. Empty package indexes are refreshed first so
+the current distribution selects the correct ALSA ABI; no operating-system
+upgrade is performed. Other package managers and unknown dependencies
+receive named recovery instructions; they are not claimed to install automatically.
+`--offline` never downloads packages. Help, version, build-only, invalid argument
+and headless source launches keep their existing behavior without dependency
+installation. Failed dependency recovery leaves a prior installed app intact.
 Mac bundles declare macOS 12 as their minimum and require the matching CPU
 architecture; native CI verification currently runs on macOS 15, not every earlier
 version.
@@ -78,7 +90,7 @@ network-free cache reuse. The new Temurin build's lack of a `jmods` directory wa
 caught during this exercise; bootstrap validates modules and jlink uses the
 linkable runtime image instead. Java 17 on the user's PATH remains unchanged.
 
-`python3 -m unittest discover -s tools -p 'test_install.py' -v` passes six tests:
+`python3 -m unittest discover -s tools -p 'test_install.py' -v` passes seven tests:
 missing package/invalid option, install/upgrade/uninstall with a real Gio launcher
 (including spaces, dollar and percent in paths), refusal to replace unmarked
 personal directories, offline-cache/invalid-JDK failures, rejected tampered-download
@@ -86,6 +98,16 @@ checksums, and interrupted replacement with restoration of the prior app. An Exe
 preflight problem found by this test was fixed by invoking the quoted launcher
 through `/bin/sh`, without shell evaluation. ShellCheck 0.11, Bash syntax checks,
 and Ruff check/format checks pass for the packaging/bootstrap tooling.
+
+The added installer regression verifies that a failed dependency check preserves
+the previous app and launcher. Twenty separate dependency/source-dispatch fixtures
+cover healthy libraries, only-needed package installation, Fontconfig lookup,
+normal authorization and denial, offline/headless behavior, failed or ineffective
+installation, unsupported dependencies and private library lookup paths. Package
+commands in these fixtures are isolated fakes and never change host libraries.
+Actual private-runtime fault injection separately reproduced both the original
+missing-AWT startup failure and failure to load the game's bundled fonts without
+Fontconfig. Evidence is in `build/portable-linux-dependency-review/`.
 
 These fixture tests do not substitute for the native game's final package/control
 checks or macOS CI results, which are recorded in the overall verification report.

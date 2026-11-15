@@ -36,6 +36,10 @@ if [[ ${1:-} == --uninstall ]]; then
 fi
 [[ -f "$app/$marker" ]] || fail 'The complete app must be beside this installer. Extract the downloaded archive first.'
 if [[ -e "$destination" && ! -f "$destination/$marker" ]]; then fail "Refusing to replace an unmarked directory: $destination"; fi
+if [[ $(uname -s) == Linux ]]; then
+    [[ -x "$app/bin/ensure-linux-desktop" ]] || fail 'The complete desktop dependency helper must be in the extracted app.'
+    "$app/bin/ensure-linux-desktop" "$app/runtime"
+fi
 parent=$(dirname -- "$destination")
 mkdir -p -- "$parent"
 work=$(mktemp -d "$parent/.emberwood-install.XXXXXX")

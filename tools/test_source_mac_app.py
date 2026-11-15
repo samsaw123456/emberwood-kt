@@ -106,6 +106,7 @@ class SourceMacAppTests(unittest.TestCase):
             "tools/source_mac_app.sh",
             "tools/cache_lock.sh",
             "tools/LauncherDesktopProbe.java",
+            "tools/ensure_linux_desktop.sh",
         ]:
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -342,7 +343,9 @@ class SourceMacAppTests(unittest.TestCase):
         self.assertEqual(self.calls("open"), [])
 
     def test_linux_keeps_the_direct_java_command(self):
-        result = self.run_launcher("--data-dir", "relative save", FIXTURE_OS="Linux")
+        result = self.run_launcher(
+            "--data-dir", "relative save", FIXTURE_OS="Linux", DISPLAY=""
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.calls("open"), [])
         self.assertEqual(self.calls("jlink"), [])

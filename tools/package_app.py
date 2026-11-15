@@ -145,6 +145,10 @@ def build_package(skip_build=False, install=False):
             executable = content / "bin"
             library.mkdir(parents=True)
             executable.mkdir(parents=True)
+            shutil.copy2(
+                ROOT / "tools/ensure_linux_desktop.sh",
+                executable / "ensure-linux-desktop",
+            )
             shutil.copy2(jar, library / "emberwood-kotlin.jar")
             icon = ROOT / "src/main/resources/assets/app/emberwood.png"
             shutil.copy2(icon, app / "icon.png")
@@ -152,6 +156,9 @@ def build_package(skip_build=False, install=False):
             launcher.write_text(
                 "#!/bin/sh\nset -eu\n"
                 'app_dir=$(CDPATH="" cd -- "$(dirname -- "$0")/.." && pwd)\n'
+                'if [ "$#" -eq 0 ] || { [ "$#" -eq 2 ] && [ "$1" = --data-dir ]; }; then\n'
+                '    "$app_dir/bin/ensure-linux-desktop" "$app_dir/runtime" --launch\n'
+                "fi\n"
                 'exec "$app_dir/runtime/bin/java" -Xms32m -Xmx256m '
                 '--enable-native-access=ALL-UNNAMED -jar "$app_dir/lib/emberwood-kotlin.jar" "$@"\n'
             )

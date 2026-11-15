@@ -19,7 +19,7 @@ jobs:
       - name: Install isolated display and output-test facilities
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xauth openbox x11-utils desktop-file-utils pipewire pipewire-bin pipewire-alsa wireplumber dbus-daemon libasound2t64
+          sudo apt-get install -y xvfb xauth openbox x11-utils desktop-file-utils pipewire pipewire-bin pipewire-alsa wireplumber dbus-daemon libasound2t64 libxtst6 libfontconfig1
           python3 -m pip install 'python-xlib==0.33' 'Pillow==12.1.1' 'ruff==0.17.5' 'shellcheck-py==0.11.0.1'
       - name: Prepare pinned private Java
         shell: bash

@@ -30,6 +30,9 @@ class InstallerTest(unittest.TestCase):
             '#!/bin/sh\nprintf "%s\\n" "launched" > "$HOME/launched.txt"\n'
         )
         self.launcher.chmod(0o755)
+        self.dependencies = self.app / "bin/ensure-linux-desktop"
+        self.dependencies.write_text("#!/bin/sh\nexit 0\n")
+        self.dependencies.chmod(0o755)
         self.installer = self.bundle / "Install Emberwood Kotlin.command"
         shutil.copy2(ROOT / "tools/install.sh", self.installer)
         self.env = dict(os.environ, HOME=str(self.home), XDG_DATA_HOME=str(self.data))
@@ -90,6 +93,20 @@ class InstallerTest(unittest.TestCase):
         self.run_installer(success=False)
         self.run_installer("--uninstall", success=False)
         self.assertEqual(sentinel.read_text(), "keep")
+
+    def test_dependency_failure_keeps_existing_app_and_registration(self):
+        self.run_installer()
+        sentinel = self.destination / "previous-release.txt"
+        sentinel.write_text("keep")
+        desktop = self.desktop.read_bytes()
+        self.dependencies.write_text(
+            "#!/bin/sh\nprintf 'missing library\\n' >&2\nexit 2\n"
+        )
+        result = self.run_installer(success=False)
+        self.assertIn("missing library", result.stderr)
+        self.assertEqual(sentinel.read_text(), "keep")
+        self.assertEqual(self.desktop.read_bytes(), desktop)
+        self.run_installer("--uninstall")
 
     def test_incomplete_package_and_invalid_option(self):
         (self.app / ".emberwood-kotlin-managed").unlink()

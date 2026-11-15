@@ -27,7 +27,7 @@ jobs:
           python-version: '3.12'
       - name: Prepare Linux display and packaging checks
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth openbox x11-utils desktop-file-utils libasound2t64
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth openbox x11-utils desktop-file-utils libasound2t64 libxtst6 libfontconfig1
       - name: Prepare pinned private Java 25
         shell: bash
         run: |
@@ -112,7 +112,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Prepare the isolated Linux desktop
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth openbox x11-utils desktop-file-utils libasound2t64
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth openbox x11-utils desktop-file-utils libasound2t64 libxtst6 libfontconfig1
       - name: Prepare pinned private Java 25
         shell: bash
         run: |
