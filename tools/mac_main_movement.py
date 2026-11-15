@@ -11,6 +11,7 @@ import json
 import platform
 import plistlib
 import select
+import shutil
 import signal
 import subprocess
 import sys
@@ -18,11 +19,12 @@ import tempfile
 import time
 from pathlib import Path
 
-from linux_game_smoke import fox_center, stop_owned
+from linux_game_smoke import fox_center, stop_owned, title_visible
 from mac_app_profile import app_pid, validate_capture_trace
+from mac_audio_audit import capture_initialization_stacks
 from mac_bundle_smoke import ImmediateMacKeys, cleanup_app, physical_command_quit
 from mac_game_focus import require_game_window
-from mac_game_window import GameWindow
+from mac_game_window import GameWindow, NativeWindowMissing
 from mac_profile_observer import NativeStatus
 from mac_test_bridge import Controller
 from package_integrity import tree_digest
@@ -51,6 +53,81 @@ def owned_window(windows, pid, executable, window_id=None):
         )
     require_game_window(pid)
     return window
+
+
+def await_owned_window(
+    windows,
+    pid,
+    executable,
+    launcher,
+    output,
+    *,
+    timeout=30,
+    clock=time.monotonic,
+    sleep=time.sleep,
+):
+    """Only a missing window is transient; identity/access/modal errors abort."""
+    deadline = clock() + timeout
+    with (output / "startup-window-observations.jsonl").open("w") as log:
+        while clock() < deadline:
+            row = {"pid": pid, "monotonic": clock(), "epoch_ns": time.time_ns()}
+            try:
+                if launcher.poll() is not None:
+                    raise RuntimeError("Native launcher exited before window readiness")
+                row["executable"] = str(windows.executable(pid))
+                if row["executable"] != str(executable):
+                    raise RuntimeError("Startup PID does not have the exact executable")
+                row["facilities"] = windows.facilities()
+                try:
+                    # Unfiltered lookup distinguishes absence from a wrong title.
+                    row["candidate_window"] = windows.find(pid)
+                except NativeWindowMissing as error:
+                    row.update(result="WAIT missing window", error=str(error))
+                else:
+                    row["window"] = owned_window(windows, pid, executable)
+                    row["result"] = "PASS owned ordinary window"
+                    return row["window"]
+            except Exception as error:
+                row.update(result="FAIL", error=str(error))
+                raise
+            finally:
+                log.write(json.dumps(row) + "\n")
+                log.flush()
+            sleep(min(0.1, max(0, deadline - clock())))
+    raise RuntimeError("The exact game window did not become ready within the deadline")
+
+
+def await_title(output, capture, *, timeout=10, clock=time.monotonic, sleep=time.sleep):
+    """Wait for actual title pixels before allowing the first physical Return."""
+    from PIL import Image
+
+    deadline = clock() + timeout
+    first = True
+    with (output / "startup-title-observations.jsonl").open("w") as log:
+        while clock() < deadline:
+            path = capture("startup-title-latest")
+            with Image.open(path) as frame:
+                if frame.size != WINDOW_SIZE:
+                    raise RuntimeError("Startup title capture changed size")
+                visible = title_visible(frame.crop(CLIENT))
+            row = {
+                "monotonic": clock(),
+                "epoch_ns": time.time_ns(),
+                "title_visible": visible,
+                "image_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "retention": "First pending and latest captured/accepted images are retained",
+            }
+            log.write(json.dumps(row) + "\n")
+            log.flush()
+            if visible:
+                destination = output / "title.png"
+                path.replace(destination)
+                return destination
+            if first:
+                shutil.copyfile(path, output / "startup-title-first.png")
+                first = False
+            sleep(min(0.1, max(0, deadline - clock())))
+    raise RuntimeError("The actual title pixels did not appear before the deadline")
 
 
 def timed_hold(native, key, seconds, record, *, clock=time.monotonic, sleep=time.sleep):
@@ -365,9 +442,9 @@ def main():
                 time.sleep(0.1)
             if pid is None:
                 raise RuntimeError("The exact native app did not appear")
-            time.sleep(2)
-            window = owned_window(windows, pid, executable)
-            report.update(pid=pid, window=window)
+            report["pid"] = pid
+            window = await_owned_window(windows, pid, executable, launcher, output)
+            report["window"] = window
 
             def ordinary_capture(label):
                 owned_window(windows, pid, executable, window["id"])
@@ -379,7 +456,7 @@ def main():
                 )
                 return path
 
-            ordinary_capture("title")
+            await_title(output, ordinary_capture)
             run_hold(output, pid, executable, window["id"], "return", 0.08, "start")
             time.sleep(1.0)  # Initial invulnerability opacity ends without input.
             start = observed_fox(ordinary_capture("entry"))
@@ -466,6 +543,19 @@ def main():
             report["result"] = "PARTIAL_PASS awaiting visual review"
     except Exception as error:
         report["error"] = str(error)
+        try:
+            subprocess.run(
+                ["screencapture", "-x", str(output / "failure-desktop.png")],
+                check=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError) as capture_error:
+            report["failure_capture_error"] = str(capture_error)
+        try:
+            if pid is not None and windows.executable(pid) == executable:
+                capture_initialization_stacks(pid, output)
+        except (OSError, RuntimeError, KeyError) as stack_error:
+            report["failure_stack_error"] = str(stack_error)
         raise
     finally:
         try:

@@ -35,6 +35,7 @@ FILTERED_CONTROLS = {
     "controls-targeted": (TARGETED_CONTROLS_FILTER, TARGETED_CONTROLS_CASES),
     "controls-capture": (CAPTURE_CONTROLS_FILTER, CAPTURE_CONTROLS_CASES),
 }
+RENDERING_VARIANTS = ("default", "no-double-buffer", "scheduled-repaint", "opengl")
 
 
 def configure_app(
@@ -50,11 +51,9 @@ def configure_app(
 ):
     if audio_trace and audit != "audio":
         raise ValueError("Audio tracing is only available for the audio audit")
-    if rendering_variant not in (
-        "default",
-        "no-double-buffer",
-        "scheduled-repaint",
-    ) or (rendering_variant != "default" and audit != "controls-capture"):
+    if rendering_variant not in RENDERING_VARIANTS or (
+        rendering_variant != "default" and audit != "controls-capture"
+    ):
         raise ValueError("Rendering variants require the focused capture diagnostic")
     configs = list((app / "Contents/app").glob("*.cfg"))
     if len(configs) != 1:
@@ -89,6 +88,8 @@ def configure_app(
                 options.append("-Daudit.disableDoubleBuffering=true")
             elif rendering_variant == "scheduled-repaint":
                 options.append("-Daudit.scheduledRepaint=true")
+            elif rendering_variant == "opengl":
+                options.extend(["-Dsun.java2d.metal=false", "-Dsun.java2d.opengl=true"])
     elif audit == "audio":
         main_class = "emberwood.AudioStateFixture"
         options.append("-Xlog:gc,safepoint:stderr:time,uptime,level,tags")
@@ -663,6 +664,19 @@ def validate_graphics_metadata(output, rendering_variant):
         raise RuntimeError(
             "Actual graphics/buffering metadata does not confirm the requested diagnostic"
         )
+    if rendering_variant == "opengl" and (
+        metadata["configuration_class"] != "sun.java2d.opengl.CGLGraphicsConfig"
+        or metadata["manager_double_buffering_before_window"] is not True
+        or metadata["manager_double_buffering_enabled"] is not True
+        or metadata.get("explicit_properties")
+        != {
+            "sun.java2d.metal": "false",
+            "sun.java2d.opengl": "true",
+        }
+    ):
+        raise RuntimeError(
+            "OpenGL diagnostic requires actual CGLGraphicsConfig and unchanged default buffering"
+        )
     stages_path = output / "presentation-stages.jsonl"
     stages = [json.loads(line) for line in stages_path.read_text().splitlines()]
     expected_stage = (
@@ -751,7 +765,7 @@ def main():
     )
     parser.add_argument(
         "--rendering-variant",
-        choices=("default", "no-double-buffer", "scheduled-repaint"),
+        choices=RENDERING_VARIANTS,
         default="default",
         help="Test-only presentation comparison for --audit controls-capture",
     )

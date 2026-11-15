@@ -30,17 +30,21 @@ class BufferingComparisonTests(unittest.TestCase):
             classes = root / "classes"
             classes.mkdir()
             for audit in ("performance", "controls", "controls-targeted", "audio"):
-                with self.subTest(audit=audit), self.assertRaises(ValueError):
-                    configure_app(
-                        app,
-                        classes,
-                        root / "output",
-                        30,
-                        None,
-                        audit,
-                        rendering_variant="no-double-buffer",
-                    )
-                self.assertEqual(config.read_bytes(), before)
+                for variant in ("no-double-buffer", "scheduled-repaint", "opengl"):
+                    with (
+                        self.subTest(audit=audit, variant=variant),
+                        self.assertRaises(ValueError),
+                    ):
+                        configure_app(
+                            app,
+                            classes,
+                            root / "output",
+                            30,
+                            None,
+                            audit,
+                            rendering_variant=variant,
+                        )
+                    self.assertEqual(config.read_bytes(), before)
             configure_app(
                 app,
                 classes,
@@ -71,6 +75,21 @@ class BufferingComparisonTests(unittest.TestCase):
             self.assertIn("java-options=-Daudit.scheduledRepaint=true\n", configured)
             self.assertNotIn("audit.disableDoubleBuffering", configured)
             self.assertNotIn("sun.java2d.", configured)
+            config.write_bytes(before)
+            configure_app(
+                app,
+                classes,
+                root / "output",
+                30,
+                None,
+                "controls-capture",
+                rendering_variant="opengl",
+            )
+            configured = config.read_text()
+            self.assertIn("java-options=-Dsun.java2d.metal=false\n", configured)
+            self.assertIn("java-options=-Dsun.java2d.opengl=true\n", configured)
+            self.assertNotIn("audit.disableDoubleBuffering", configured)
+            self.assertNotIn("audit.scheduledRepaint", configured)
 
     def fixture_run(
         self,

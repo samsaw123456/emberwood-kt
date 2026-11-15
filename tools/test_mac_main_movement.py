@@ -10,7 +10,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from mac_game_window import NativeWindowMissing
 from mac_main_movement import (
+    await_owned_window,
+    await_title,
     inspect_held_stream,
     observed_fox,
     owned_window,
@@ -51,6 +54,165 @@ class Keyboard:
 
 
 class MainMovementTests(unittest.TestCase):
+    def test_late_owned_window_is_observed_before_readiness(self):
+        clock = Clock()
+        window = {"id": 7, "bounds": [0, 0, 1152, 676]}
+        windows = SimpleNamespace(
+            executable=Mock(return_value=Path("/owned")),
+            facilities=Mock(return_value={"permitted": True}),
+            find=Mock(
+                side_effect=[
+                    NativeWindowMissing("not yet created"),
+                    NativeWindowMissing("not yet visible"),
+                    window,
+                    window,
+                ]
+            ),
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("mac_main_movement.require_game_window") as focus,
+        ):
+            output = Path(directory)
+            actual = await_owned_window(
+                windows,
+                42,
+                Path("/owned"),
+                SimpleNamespace(poll=lambda: None),
+                output,
+                clock=clock,
+                sleep=clock.sleep,
+            )
+            rows = [
+                json.loads(line)
+                for line in (output / "startup-window-observations.jsonl")
+                .read_text()
+                .splitlines()
+            ]
+        self.assertEqual(actual, window)
+        self.assertAlmostEqual(clock(), 100.2)
+        self.assertEqual([row["pid"] for row in rows], [42, 42, 42])
+        self.assertEqual(
+            [row["result"] for row in rows],
+            [
+                "WAIT missing window",
+                "WAIT missing window",
+                "PASS owned ordinary window",
+            ],
+        )
+        focus.assert_called_once_with(42)
+
+    def test_startup_identity_access_title_and_modal_errors_are_not_retried(self):
+        window = {"id": 7, "bounds": [0, 0, 1152, 676]}
+        for failure in ("identity", "permission", "title", "modal"):
+            with self.subTest(failure=failure):
+                clock = Clock()
+                windows = SimpleNamespace(
+                    executable=Mock(
+                        return_value=Path(
+                            "/other" if failure == "identity" else "/owned"
+                        )
+                    ),
+                    facilities=Mock(
+                        side_effect=RuntimeError("no permission")
+                        if failure == "permission"
+                        else None,
+                        return_value={},
+                    ),
+                    find=Mock(
+                        side_effect=[
+                            window,
+                            NativeWindowMissing("different owned title"),
+                        ]
+                        if failure == "title"
+                        else None,
+                        return_value=window,
+                    ),
+                )
+                with (
+                    tempfile.TemporaryDirectory() as directory,
+                    patch(
+                        "mac_main_movement.require_game_window",
+                        side_effect=RuntimeError("modal")
+                        if failure == "modal"
+                        else None,
+                    ),
+                    self.assertRaises(RuntimeError),
+                ):
+                    await_owned_window(
+                        windows,
+                        42,
+                        Path("/owned"),
+                        SimpleNamespace(poll=lambda: None),
+                        Path(directory),
+                        clock=clock,
+                        sleep=clock.sleep,
+                    )
+                self.assertEqual(clock(), 100.0)
+
+    def test_missing_window_timeout_keeps_observations_and_sends_no_input(self):
+        clock = Clock()
+        windows = SimpleNamespace(
+            executable=lambda _: Path("/owned"),
+            facilities=dict,
+            find=Mock(side_effect=NativeWindowMissing("absent")),
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("mac_main_movement.NativeKeys") as keys,
+            patch("mac_main_movement.require_game_window") as focus,
+        ):
+            output = Path(directory)
+            with self.assertRaisesRegex(RuntimeError, "deadline"):
+                await_owned_window(
+                    windows,
+                    42,
+                    Path("/owned"),
+                    SimpleNamespace(poll=lambda: None),
+                    output,
+                    timeout=0.25,
+                    clock=clock,
+                    sleep=clock.sleep,
+                )
+            rows = (
+                (output / "startup-window-observations.jsonl").read_text().splitlines()
+            )
+            self.assertEqual(len(rows), 3)
+            self.assertTrue(all(json.loads(row)["error"] == "absent" for row in rows))
+        self.assertAlmostEqual(clock(), 100.25)
+        keys.assert_not_called()
+        focus.assert_not_called()
+
+    def test_title_wait_uses_client_pixels_and_retains_pending_and_accepted_images(
+        self,
+    ):
+        from PIL import Image
+
+        clock = Clock()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+
+            def capture(label):
+                path = output / f"{label}.png"
+                Image.new("RGB", (1152, 676)).save(path)
+                return path
+
+            with patch(
+                "mac_main_movement.title_visible", side_effect=[False, True]
+            ) as visible:
+                path = await_title(output, capture, clock=clock, sleep=clock.sleep)
+            self.assertEqual(path, output / "title.png")
+            self.assertTrue((output / "startup-title-first.png").exists())
+            self.assertEqual(visible.call_count, 2)
+            self.assertTrue(
+                all(call.args[0].size == (1152, 648) for call in visible.call_args_list)
+            )
+            self.assertAlmostEqual(clock(), 100.1)
+            with self.assertRaisesRegex(RuntimeError, "title pixels"):
+                await_title(
+                    output, capture, timeout=0.2, clock=clock, sleep=clock.sleep
+                )
+
     def test_stalled_preflight_cannot_release_a_key_before_go(self):
         process = Mock()
         process.poll.return_value = None

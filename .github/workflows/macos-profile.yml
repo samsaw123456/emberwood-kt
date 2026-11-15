@@ -24,7 +24,7 @@ on:
         type: choice
         required: true
         default: performance
-        options: [performance, controls, controls-targeted, controls-capture, controls-buffering-compare, controls-scheduled, main-movement, compare-launchers, audio, audio-trace]
+        options: [performance, controls, controls-targeted, controls-capture, controls-buffering-compare, controls-scheduled, controls-opengl, main-movement, compare-launchers, audio, audio-trace]
 permissions:
   contents: read
 jobs:
@@ -76,6 +76,8 @@ jobs:
               python3 tools/mac_capture_compare.py ;;
             controls-scheduled)
               python3 tools/mac_app_profile.py --audit controls-capture --capture-trace --rendering-variant scheduled-repaint ;;
+            controls-opengl)
+              python3 tools/mac_app_profile.py --audit controls-capture --capture-trace --rendering-variant opengl ;;
             main-movement)
               python3 tools/mac_main_movement.py --output build/main-movement-native-app ;;
             compare-launchers)

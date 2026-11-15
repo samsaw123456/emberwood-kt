@@ -134,6 +134,38 @@ def trace_fixture(output, pid=12345):
 
 
 class CaptureTraceTests(unittest.TestCase):
+    def test_opengl_requires_actual_backend_and_no_other_overrides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            metadata = graphics_fixture(output)
+            metadata.update(
+                configuration_class="sun.java2d.opengl.CGLGraphicsConfig",
+                explicit_properties={
+                    "sun.java2d.metal": "false",
+                    "sun.java2d.opengl": "true",
+                },
+            )
+            path = output / "graphics-metadata.json"
+            path.write_text(json.dumps(metadata))
+            validate_graphics_metadata(output, "opengl")
+            for change in (
+                {"configuration_class": "sun.java2d.metal.MTLGraphicsConfig"},
+                {"explicit_properties": {}},
+                {
+                    "explicit_properties": {
+                        **metadata["explicit_properties"],
+                        "sun.java2d.uiScale": "2",
+                    }
+                },
+                {"manager_double_buffering_enabled": False},
+                {"requested_double_buffering_disabled": True},
+                {"requested_scheduled_repaint": True},
+            ):
+                with self.subTest(change=change):
+                    path.write_text(json.dumps({**metadata, **change}))
+                    with self.assertRaises(RuntimeError):
+                        validate_graphics_metadata(output, "opengl")
+
     def test_scheduled_strategy_requires_executed_stages_and_no_buffer_override(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)

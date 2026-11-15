@@ -4,6 +4,10 @@ import ctypes
 from pathlib import Path
 
 
+class NativeWindowMissing(RuntimeError):
+    """No visible ordinary window matches the requested process and title."""
+
+
 class Rectangle(ctypes.Structure):
     _fields_ = [(name, ctypes.c_double) for name in ("x", "y", "width", "height")]
 
@@ -142,7 +146,9 @@ class GameWindow:
                         }
                     )
             if not found:
-                raise RuntimeError("The exact game PID has no visible ordinary window")
+                raise NativeWindowMissing(
+                    "The exact game PID has no visible ordinary window"
+                )
             if title is not None and len(found) != 1:
                 raise RuntimeError("The exact game window title is ambiguous")
             return max(found, key=lambda item: item["bounds"][2] * item["bounds"][3])
