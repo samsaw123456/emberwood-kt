@@ -5,58 +5,152 @@
 The current JAR is
 `7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
 It fixes release-then-press ordering for a new jump within one simulation tick.
-All 57 unit tests and a focused nine-case physical-input audit pass. Fresh
-cross-platform performance and complete control validation for this JAR are
-pending. The prior measurements below retain their original build identity.
+All 60 unit tests and a focused nine-case physical-input audit pass. Fresh
+Linux and both native Mac launch routes have completed their current performance
+review. The first Intel failure and transient slow intervals remain recorded
+below. Current audio verification is complete; the final Intel control review
+is still unfinished.
 
-## Retained 88283267 baseline
+These rates count **completed Java paint calls per second**, not continuously
+measured native presentation FPS. The retained captures prove those individual
+images were presented; they do not measure every displayed frame. On Intel,
+the later control trace found a 3.060-second native surface-publication delay
+while Java paint calls continued. Passing paint-throughput averages therefore
+do not establish smooth on-screen pacing. A subsequent unchanged-Main probe
+also reached the left boundary after a promptly released Left command, with a
+3.123-second stream gap. Intel movement/presentation remains unresolved.
 
-Previous JAR `88283267eefaf417da4965a1248c1b70b9188effd71f6ee3f69cc2c1911e5bc1`
-passes every performance threshold on Linux x86-64/ARM64 and both native Mac
-launch routes on Intel/ARM64. Each row below includes all 22 measurement windows
-and a full 180-second input soak with a 128 MiB Java heap and two visible
-processors. All 28 game frames per route were inspected; these are measured
-hardware results, not a guarantee for every low-resource machine.
-
-| Platform and launch route | Soak frames/s | Mean paint | CPU, one core | Peak sampled process RSS |
+| Current build and launch route | Completed Java paints/s during soak | Mean Java paint | CPU, one core | Retained heap before → after |
 | --- | --- | --- | --- | --- |
-| Linux x86-64 | 62.149 | 1.663 ms | 9.222% | Not recorded |
-| Linux ARM64 | 62.155 | 1.915 ms | 11.527% | Not recorded |
-| Mac ARM64, cached source app | 51.026 | 5.155 ms | 44.634% | 262,640 KiB |
-| Mac ARM64, packaged app | 50.776 | 5.284 ms | 43.108% | 266,384 KiB |
-| Mac Intel, cached source app | 57.339 | 4.002 ms | 72.845% | 209,200 KiB |
-| Mac Intel, packaged app | 57.504 | 3.937 ms | 72.940% | 216,904 KiB |
+| Linux x86-64 | 62.179 | 1.189 ms | 7.872% | 20,540,584 → 20,481,336 bytes |
+| Linux ARM64 | 62.177 | 1.691 ms | 10.650% | 20,129,824 → 20,011,392 bytes |
+| Mac ARM64, cached source app | 51.050 | 6.029 ms | 45.564% | 14,564,632 → 15,059,488 bytes |
+| Mac ARM64, packaged app | 51.197 | 5.113 ms | 49.234% | 14,701,416 → 14,700,704 bytes |
+| Mac Intel, cached source app, controlled repeat | 55.732 | 5.881 ms | 96.536% | 14,944,904 → 14,797,168 bytes |
+| Mac Intel, packaged app, controlled repeat | 57.235 | 4.700 ms | 85.578% | 14,646,896 → 14,838,896 bytes |
 
-The Mac runs include a ready, running audio output. The Linux performance hosts
-had no output line; separate actual PCM tests cover both Linux architectures,
-but do not add audio CPU cost to these performance numbers. RSS includes native
-allocations and is sampled once a second, rather than an operating-system peak.
-Retained Java heap stays stable in every row. ARM Mac content is 1024×648;
-Intel Mac and Linux content is 1152×648.
+Both Linux routes passed all 22 windows and the full 180-second soak with a
+128 MiB heap, two visible processors and 1152×648 content. All 56 original game
+frames were visually inspected. The slowest active window was 61.962 frames/s
+on x86-64 and 61.972 on ARM64. These hosts had no output line, so their CPU
+measurements exclude audio playback; separate actual PCM proof does not add that
+cost to these numbers. Process RSS was not recorded. Independent measurements,
+original frame hashes and journals are retained in
+`build/ci-final-7d9668ed-linux-{x64,arm64}/build/performance/independent-review/`.
 
-The actual source launcher creates and reuses a native Mac app through the same
-builder as the download. The source and packaged runtime/JAR bytes match on
-each Mac architecture. Both routes use LaunchServices; the earlier raw-JVM
-pacing failures below do not describe the corrected source launcher. The Intel
-packaged startup snapshot catches an empty initial window; its subsequent title
-and all 28 measured game frames render correctly. That early snapshot is retained
-as a capture limitation, not presented as a rendered startup proof.
+Both Mac ARM routes passed all 22 windows and their full 180-second soaks with
+the same heap/processor limits and a ready audio output. Their slowest active
+windows were 49.977 and 49.673 frames/s. All 58 original captures were inspected,
+including the ordinary native startup menus; no rendered defect was found.
+The source/package runtime trees match. Peak sampled RSS was 265,824/270,672 KiB,
+respectively, across 257 samples each; this is not an OS high-water measurement.
+The 1024×648 content remains letterboxed correctly. Evidence and exact hashes:
+`build/ci-native-final-7d9668ed-macos-arm/build/performance-{source,native}-app/independent-review/`.
 
-Evidence: [Linux run 43712421975](https://github.com/samsaw123456/emberwood-kt/actions/runs/43712421975)
-and [native Mac run 43715704373](https://github.com/samsaw123456/emberwood-kt/actions/runs/43715704373).
-Independent metric checks, exact frame hashes and visual journals are retained in
-`build/ci-final-8828-linux-{x64,arm64}/build/performance/independent-review/`
-and `build/ci-native-final-macos-{arm,intel}/build/performance-{source,native}-app/independent-review/`.
-The Intel Mac run's later control audit failed before input because its test
-marker did not survive display color conversion; its audio step was skipped.
-The separate native trace repeat `43719992137` and final untraced repeat
-[`43721920267`](https://github.com/samsaw123456/emberwood-kt/actions/runs/43721920267)
-subsequently completed all fourteen physical audio cases on each Mac with the
-same application/runtime. Neither repeat reproduced the earlier audio gaps;
-their cause remains unexplained. These audio checks are not new performance
-measurements. Control coverage remains separate from these performance checks.
-Actual audio continuity findings and follow-up diagnostics are recorded in
-[AUDIO.md](AUDIO.md).
+The first current Intel cached-source profile failed its opossum boss window:
+40.729 frames/s against the unchanged minimum of 45. Its mean paint time was
+10.489 ms, and its full 180-second soak passed at 56.249 frames/s, 5.669 ms paint
+and 88.760% of one CPU core. All 22 windows completed. Sampled RSS peaked at
+198,328 KiB; retained heap fell from 14,838,840 to 14,426,608 bytes.
+
+All 29 captured originals were inspected, including the initial empty client
+window before the title draws. The 28 game frames render correctly. Every
+before/after focus check and every finished-launch native observation stayed
+active and frontmost. The adjacent boar window also slowed, then the wolf scene
+recovered. The renderer, assets, simulation and audio class bytes match the
+previous build. The failed run lacks GC and interval timings, so neither garbage
+collection nor host contention is established as its cause.
+
+This failure remains recorded in
+[run 43725299181](https://github.com/samsaw123456/emberwood-kt/actions/runs/43725299181),
+with independent evidence in
+`build/ci-native-final-7d9668ed-macos-intel/build/performance-source-app/independent-review/`.
+The controlled Intel source/bundle [repeat 43726910417](https://github.com/samsaw123456/emberwood-kt/actions/runs/43726910417)
+passed all 22 gates on each route with the same production JAR/runtime, limits
+and 180-second soak. All 58 originals were inspected. The package startup capture
+is initially empty; its subsequent title and all 28 game frames render correctly.
+Source/package sampled RSS peaked at 202,692/210,776 KiB. Their slowest complete
+active windows measured 45.551/55.088 frames/s; the opossum scenes recovered to
+54.750/57.760 frames/s. Both output lines were ready and running.
+
+Test-only buffered counters independently reproduce every aggregate from 1,076
+sample points per route. They also expose transient slow intervals: 43/978 source
+and 9/983 package active intervals of at least 100 ms fall below 45 frames/s.
+The worst source interval spans 693.963 ms at 10.087 frames/s and 59.203 ms mean
+paint; the worst package interval spans 322.075 ms at 27.944 frames/s. Neither
+overlaps a logged GC/safepoint. Maximum GC pauses of 76.588/33.018 ms occur
+elsewhere. These observations do not establish whether the earlier failure or
+transients came from rendering, JVM compilation, native presentation or host
+scheduling. Aggregate passes are not a claim of constant frame pacing.
+
+Independent counter checks, logs, frame hashes and journals are retained in
+`build/ci-native-repeat-7d9668ed-macos-intel/build/performance-{source,native}-app/independent-review/`.
+The repeat later failed one of 280 control cases after stale captures prolonged
+a held Left command; audio was skipped in that matrix. A separate current-build
+[audio run](AUDIO.md) subsequently passed all fourteen cases. The subsequent
+[control run 43732405531](https://github.com/samsaw123456/emberwood-kt/actions/runs/43732405531)
+still fails only the Left case. Its retained first/latest rejected images show
+the entire scene unchanged while simulation advances; moving the nonce into
+the game's own paint pass did not resolve it. Screenshot caching versus actual
+presentation delay remained unresolved at that point. The subsequent bounded
+[stream comparison 43736264766](https://github.com/samsaw123456/emberwood-kt/actions/runs/43736264766)
+reproduced the delay in both capture paths: one streamed game image is
+pixel-identical to the stale screenshot. Java completed 140 newer paint passes
+before fresh native pixels appeared 3.060 seconds later. Thirteen logged
+safepoints total 182 ms; they do not alone explain that gap. All 42 retained
+stream images were inspected, and the trace has no dropped records or selected
+images. This locates the delay downstream of Java's completed paint callbacks,
+without establishing a specific graphics pipeline or compositor cause. The
+trace adds overhead and is not a performance measurement. This control failure
+remains open and is distinct from the aggregate performance measurements.
+The subsequent [buffering comparison 43738815451](https://github.com/samsaw123456/emberwood-kt/actions/runs/43738815451)
+retains a negative result. Both fresh applications report the Metal graphics
+configuration on a 1920×1080, 30 Hz display. The default route again delays
+native publication for 3.090 seconds after the newer Java paint; 180 Java paint
+callbacks continue in that interval, while its 19 safepoints total only 40.361 ms.
+Disabling the test copy's RepaintManager buffering makes presentation worse:
+most retained images contain partial backgrounds or terrain without the complete
+fox, HUD or labels. Four direction cases fail before input, Return fails during
+capture, and the lifecycle capture aborts. The required default-repeat route
+therefore never starts. All 104 retained stream images across both attempts were
+inspected. This incomplete three-route diagnostic supports no production
+buffering change; its timing includes tracing and forced audit paints.
+Original hashes, GC timing and the independent review are retained in
+`build/ci-buffer-comparison-7d9668ed-macos-intel/build/controls-capture-comparison/independent-stream-review.json`.
+The [scheduled-repaint diagnostic 43740408807](https://github.com/samsaw123456/emberwood-kt/actions/runs/43740408807)
+also fails Left. Its native surface updates 2.858 seconds after the newer Java
+paint, with 165 intervening completed paint callbacks and 73 safepoints totaling
+93.928 ms. All 32 retained stream images were inspected. This test-only
+scheduling change does not resolve the failure. The ordinary Main launcher
+probe uses bounded physical holds independent of capture latency. Its first
+attempt stopped before input because the test did not await window readiness;
+owned SIGTERM cleanup succeeded, but that attempt supplies no movement or
+physical-Quit proof.
+The corrected [Main retry 43741464146](https://github.com/samsaw123456/emberwood-kt/actions/runs/43741464146)
+passed actual title readiness and visibly moved/stopped with A. Its first Left
+hold ended after 356.831 ms, with prompt native key-up acknowledgment, but the
+stream then had a 3,122.656 ms gap between complete samples. The next image
+showed the fox at the left boundary and the timer advancing from 00:06 to 00:09.
+All 80 originals were inspected. No damage, respawn or dialog appears; later
+animation at the wall cannot prove braking. The Main probe's synchronous
+AXFocusedWindow query timed out during that hold. Its independent input worker
+had already released the key. NativeAudit's snapshot controller does not make
+that same AX query, so this does not establish a common cause for both probes.
+The post-error stacks were collected near recovery and do not locate the earlier
+delay. Owned SIGTERM cleanup succeeded; physical Quit remains unverified in this
+attempt. A bounded stream-only observation and concurrent native stack sample
+are prepared to isolate the Main probe's extra query; production is unchanged.
+
+The [OpenGL diagnostic 43741471213](https://github.com/samsaw123456/emberwood-kt/actions/runs/43741471213)
+also fails Left. Actual CGLGraphicsConfig reports **software OpenGL**. Native
+publication follows the newer Java paint by 2.832 seconds despite 96 intervening
+paint callbacks; 23 safepoints total only 42.893 ms. All 34 stream images were
+inspected, with the final two resized/padded images excluded from fixed-geometry
+comparison. This is another negative diagnostic, not support for a production
+graphics override. Exact hashes and timing journals are retained under
+`build/ci-main-ready-7d9668ed-macos-intel/build/main-movement-native-app/independent-review/`
+and `build/ci-opengl-7d9668ed-macos-intel/build/controls-capture-native-app/independent-stream-review/`.
+The earlier failed performance run and prior-build evidence remain preserved.
 
 ## Audit method
 
@@ -65,6 +159,15 @@ output, and uses operating-system keys for movement, jumping, retry, pause and a
 three-minute movement/projectile soak. Original level fixtures separately cover
 eight regions, four ordinary monster species and six guardians. Fixtures are
 performance scenes, not evidence of completing those levels through input.
+
+Throughput is the difference in `GamePanel.paintedFrames` divided by elapsed
+wall time. That counter advances when Java's `paintComponent` finishes;
+`paintNanos` measures its Java drawing body. Neither counter observes the later
+native-buffer publication, compositor or display scanout. The historical
+`frames/s` values and the audit's similarly named output columns all refer to
+this Java paint throughput. Screenshots and the separate bounded stream trace
+provide presentation evidence within their recorded scope, not continuous
+native FPS for these performance windows.
 
 On Linux, run it after `./gradlew check fatJar`, using Java 25:
 
@@ -98,6 +201,13 @@ Its external controller owns test-only input/capture permissions. Raw `java`
 startup is retained only as a diagnostic comparison; it is not the Mac source
 launcher or the final native-app performance route.
 
+`interval-samples.tsv` retains the existing quarter-second sample points plus
+each window's before/after counters. It records raw frame, paint, process CPU,
+simulation and heap measurements, with paired monotonic/epoch clocks and the
+clock-read span. Samples are buffered and written after measurement, without
+extra event-thread polls. The isolated Mac performance configuration also logs
+GC and safepoint times to `app-stderr.log`; the production launcher is unchanged.
+
 Keyboard injection runs through the shared persistent `PhysicalKeys` helper,
 separately from AWT's X11 lock; independent AWT event receipts still establish
 when the core commands arrive. Robot captures the actual displayed frames.
@@ -123,401 +233,19 @@ exception. A missing record means the audit did not complete. This is essential
 for the isolated macOS application probe because LaunchServices' successful
 `open -W` status alone does not establish the Java audit's result.
 
-The audit requires at least 45 painted frames/second, mean painting within a
-16.67 ms frame budget, and simulation progress at least 90% of wall time. Static
+The audit requires at least 45 completed Java paint calls/second, mean Java
+painting within a 16.67 ms budget, and simulation progress at least 90% of wall
+time. Static
 menus must make no simulation progress and repaint no more than twice a second.
 Retained heap growth after collection must stay below 16 MiB across the soak.
 
-## Investigation history: baseline and follow-up
+## Preserved investigation history
 
-The first valid Linux/Xvfb run used Temurin 25.0.5, a 1152×648 content area, a
-128 MiB maximum heap and two processors visible to the JVM. All rendered regions,
-monsters, guardians, movement, jumping and retry screenshots were inspected.
-The three-minute loop stayed playable, completed normal gem pickups and had no
-deaths; simulation kept pace with elapsed real time. Retained heap decreased
-from 17,283,600 to 14,104,168 bytes. Independently sampled peak process RSS was
-260,532 KiB (254.4 MiB).
-
-The baseline **failed** the painting budget: the boar scene averaged 16.722 ms,
-and the active soak averaged 34.065 frames/second with 26.550 ms painting. The
-other twenty measured windows passed. This identified rendering work for a
-measured optimization and rerun; it is not a performance completion claim.
-Baseline evidence is retained in `build/performance-baseline/`, with 31
-deterministic rendering reference images in `build/render-audit-baseline/`.
-
-A reusable RGB composition buffer was tried and rejected after measurement. It
-increased many scenes to 19–25 ms mean painting; the canopy, for example, changed
-from 59.443 frames/second and 4.766 ms painting to 43.454 frames/second and
-22.174 ms painting. That trial was stopped before the soak once the regression
-was clear. Its logs and screenshots remain in `build/performance-buffer-trial/`.
-The buffer change was reverted.
-
-The replacement caches nearest-neighbor image resizing, with at most 8 MiB of
-cached pixels. All 31 deterministic renderer reference images and the actual
-native title screenshot match the baseline pixel for pixel. Original asset files
-remain unchanged.
-
-| Measured scene | Baseline frames/s / mean paint | Scaled cache frames/s / mean paint |
-| --- | --- | --- |
-| Forest region | 55.254 / 16.481 ms | 61.199 / 8.938 ms |
-| River region | 58.806 / 11.928 ms | 61.505 / 6.247 ms |
-| Three-minute input soak | 34.065 / 26.550 ms | 57.757 / 13.622 ms |
-
-The optimized soak passed every criterion: 179.983 seconds of simulation during
-180.013 seconds of wall time, no deaths, and retained heap of 18,866,568 bytes
-before / 18,819,856 after. Peak process RSS was 257,636 KiB (251.6 MiB). Process
-CPU during the soak averaged 39.192% of one core. Heap and process RSS are distinct
-measurements; the small RSS difference between runs is not a memory-saving claim.
-These process measurements include Robot and the audit instrumentation alongside
-the running game window.
-
-That complete optimized run still **failed** two short frame-budget windows:
-the boar scene at 18.147 ms and the warmup at 18.123 ms. The shared eight-CPU host
-had load averages around 14–16; a one-second sample measured 3.42% idle CPU and
-6.46% I/O wait. Other work was left untouched. This contention is a measured
-limitation of the run, not grounds for changing the thresholds or marking those
-rows passed. Evidence is retained in `build/performance-scaled-long/`, including
-the independent host sample and exact pixel comparisons. A dedicated platform
-run or repeat under suitable conditions must resolve the remaining scene checks.
-
-This Linux baseline did not verify macOS or other hardware. The subsequent
-native-platform measurements are retained below; the current build's results
-appear first so historical failures cannot be mistaken for its present status.
-
-## Earlier raw-JVM macOS measurements
-
-The subsequent macOS CI runs completed the full audit on both native
-architectures with the same 128 MiB heap and two-processor JVM configuration.
-Both **failed** the minimum frame-rate criterion in every active scene. Their
-static title and pause screens passed, simulation kept pace, and retained heap
-did not grow.
-
-| Native runner | Soak frames/s | Mean paint | Simulation / wall seconds | Retained heap before / after |
-| --- | --- | --- | --- | --- |
-| macOS ARM64 | 18.417 | 5.250 ms | 179.850 / 180.055 | 11,866,632 / 10,706,392 bytes |
-| macOS x86-64 | 27.408 | 4.937 ms | 179.950 / 180.060 | 11,568,304 / 11,479,920 bytes |
-
-The ARM64 desktop constrained the content area to 1024×648; Intel used
-1152×648. These are real native window measurements, not Linux emulation.
-Evidence is retained under `build/ci-third-macos-arm/build/performance/` and
-`build/ci-third-macos-intel/build/performance/`.
-
-Low recorded paint time does not prove that native presentation is fast:
-`paintNanos` measures the custom drawing body, excluding Swing background
-clearing and later buffer presentation. The low frame rates therefore require
-further scheduling/presentation diagnosis before macOS performance can pass.
-No frame-rate thresholds have been relaxed.
-
-The fourth ARM64 CI run reproduced the failure at 18.132 frames/second and
-4.504 ms mean painting during the full soak. Its Java Flight Recording identifies
-timer scheduling as the immediate bottleneck: 5,021 recorded `TimerQueue` parks
-requested a median 15.988 ms but lasted a median 59.791 ms (79.802 ms at the 95th
-percentile). The event thread spent 241.835 seconds waiting for its event queue
-during the 278-second recording, versus 0.265 seconds waiting for Metal flushes.
-All four periodic thread dumps place it in `EventQueue.getNextEvent`. Even the
-audit's requested 20 ms measurement sleeps lasted a median 69.137 ms. The JFR's
-resident-set event reports a process high-water mark of 343,015,424 bytes
-(327.1 MiB), distinct from the 128 MiB heap cap and roughly 12.2 MiB retained
-heap after the soak.
-
-A separate 30-second Metal-disabled diagnostic did not solve this: its timer
-parks still lasted a median 55.703 ms for 15.988 ms requested, and mean paint costs
-rose to roughly 21–33 ms. This diagnostic is not a shipped setting. The recordings
-and screenshots are preserved under `build/ci-fourth-macos-arm/build/performance/`
-and `performance-metal-disabled/`. Reproduce the scheduling inspection with:
-
-```sh
-"$JAVA_HOME/bin/jfr" view thread-cpu-load path/to/pacing.jfr
-"$JAVA_HOME/bin/jfr" print --json \
-  --events jdk.ThreadPark,jdk.JavaMonitorWait,jdk.ThreadSleep path/to/pacing.jfr
-```
-
-These observations establish timer oversleep, but do not by themselves establish
-App Nap or the runner's process policy. Apple documents timer throttling as one
-effect of [App Nap](https://developer.apple.com/library/archive/documentation/Performance/Conceptual/power_efficiency_guidelines_osx/AppNap.html).
-The next diagnostic records native foreground/background-policy observations for
-only the launched Java PID, alongside `window-focus.tsv` assertions that each
-measurement begins and ends with a visible, active, keyboard-focused window.
-A separate `taskpolicy -a` run compares Apple's application resource policy;
-the [Apple command documentation](https://github.com/apple-oss-distributions/system_cmds/blob/main/taskpolicy/taskpolicy.8)
-describes that scope. The default full run and its failures remain authoritative.
-No global power setting, production rendering workaround or busy-spin loop is
-introduced to obtain a passing number.
-
-## Native Linux CI measurements
-
-Both dedicated Linux architectures passed all 22 resource-measurement windows,
-including the full three-minute soak. x86-64 passed the complete audit. ARM64
-failed only the separate physical A/release core-loop assertion; its screenshots
-showed correct leftward movement but did not establish completed braking at the
-fixed-delay check. That run remains failed, and its result is not relabeled as a
-complete pass.
-
-| Native runner | Soak frames/s | Mean paint | Retained heap before / after |
-| --- | --- | --- | --- |
-| Linux x86-64 | 62.098 | 1.628 ms | 19,704,800 / 19,598,128 bytes |
-| Linux ARM64 | 62.136 | 1.835 ms | 19,705,512 / 19,645,928 bytes |
-
-The core loop now records observed operating-system key receipt and separately
-waits for braking/landing/retry, all with bounded timeouts. Actual receipt and
-recovery timings are written to `core-input-latency.tsv`. The fourth native run
-then passed the complete audit on both architectures, including all 22 windows
-and the physical core loop:
-
-| Native runner | Soak frames/s | Mean paint | Process CPU, one core | Retained heap before / after |
-| --- | --- | --- | --- | --- |
-| Linux x86-64 | 62.120 | 1.724 ms | 10.372% | 19,719,392 / 19,555,880 bytes |
-| Linux ARM64 | 62.172 | 1.912 ms | 11.117% | 19,635,256 / 19,586,800 bytes |
-
-Evidence is retained under `build/ci-fourth-linux-x64/build/performance/` and
-`build/ci-fourth-linux-arm/build/performance/`. These passes do not erase the
-previous failed run.
-
-The Mac timing investigation also exposed a separate audit assumption: equal
-requested left/right hold durations need not return to the same location when
-native sleeps overshoot. The core loop now requires each direction to travel
-more than 65 pixels from its own observed starting position, with left-release
-recovery additionally requiring zero horizontal velocity. It still excludes the
-world wall (`x > 40`), so reaching a
-boundary cannot masquerade as braking. `core-positions.tsv` retains the initial,
-right-release, pre-left and stopped positions. The fifth native Linux run passed
-the corrected core loop and all 22 measurements on both architectures: its soak
-was 62.118 frames/s at 1.703 ms mean paint on x86-64, and 62.196 frames/s at
-1.681 ms on ARM64. Evidence is retained under
-`build/ci-fifth-linux-x64/build/performance/` and
-`build/ci-fifth-linux-arm/build/performance/`.
-
-Linux CI had no audio device; actual audio output is tested separately on the
-local PipeWire desktop. The native CI artifacts are under
-`build/ci-third-linux-x64/build/performance/` and
-`build/ci-third-linux-arm/build/performance/`.
-
-## Intel macOS microphone prompt and audio initialization
-
-The fourth Intel run is additionally invalid as unobstructed foreground testing:
-its installed-app desktop screenshot shows an unexpected microphone permission
-prompt. Permission was not granted. The game only requests a `SourceDataLine`
-for playback; it does not request recording. The JFR thread dumps show the audio
-thread blocked inside `DirectAudioDevice.nOpen` at 61, 123, 184 and 247 seconds,
-then later blocked in start/close. The event-dispatch thread was blocked in
-provider close at 309–433 seconds and native close at 495–558 seconds. This can
-also interfere with focus and cleanup.
-
-The previous summary text “opened; original cues enabled” used a null error as
-its condition and therefore did **not** prove initialization completed. The audit
-now distinguishes initialization from an opened, running playback line using
-`Audio.ready`; actual audible output is established by the separate process-only
-PCM audit. The audio-state fixture waits for that readiness with a bounded
-timeout rather than treating the absence of an error as success.
-
-OpenJDK's direct mixer eagerly probes both playback and capture format support.
-For its synthetic default mixer, capture-format probing queries the default
-input device even when the caller only requested playback. A related
-[CoreAudio output-only microphone prompt was fixed in RustAudio](https://github.com/RustAudio/cpal/pull/1070/files)
-by avoiding that default-input query. This is a supported diagnosis to test,
-not yet proof that a proposed output-device selection resolves Emberwood's
-prompt. The current default output must be preserved; microphone permission
-and silent disabling of sound are not acceptable substitutes for a verified fix.
-
-Evidence: `build/ci-fourth-macos-intel/build/bundle-launch-macos/desktop-with-dock.png`,
-`build/ci-fourth-macos-intel/build/performance/pacing.jfr` and
-`build/mac-intel-thread-dumps.txt`.
-
-The shutdown fix publishes the playback line only after initialization completes
-and performs potentially blocking native close on a daemon thread. Two hardware
-fixtures block initialization and active-device close independently; both prove
-that Quit returns within the bounded test deadline and the device is released
-when the provider resumes. These regressions passed in the centralized 28-test
-run. They do not substitute for the pending native Mac microphone-prompt fix or
-its actual startup, PCM and application-close verification.
-
-## Fifth Mac ARM foreground observations
-
-The next default run still failed all active FPS windows: its 180-second soak
-rendered 18.348 frames/s at 4.879 ms average paint and 19.872% process CPU. All
-44 before/after AWT focus checks passed. All 258 native samples after launch
-reported an active, visible, frontmost regular application, with Darwin
-background policy zero and nice priority -10. The physical core checks passed.
-
-Its 5,054 TimerQueue waits requested a median 15.990 ms and lasted 58.926 ms
-(p95 79.869 ms). The 3,672 requested 20 ms harness sleeps lasted a median
-69.688 ms. The event-dispatch thread spent 239.019 seconds parked. Simple focus
-loss or an explicitly backgrounded process does not explain these observations;
-they still do not establish a particular OS timer-policy cause.
-
-All 28 native screenshots were inspected; no permission prompt obscures this
-ARM run. The attempted application-policy comparison did not launch because the
-hardcoded `/usr/bin/taskpolicy` path was absent, so there is no policy result to
-compare. The next comparison uses an isolated LaunchServices application copy
-with the unchanged production JAR, assets and bundled runtime.
-
-That bundled runtime intentionally omits management and JFR modules. The audit
-therefore uses `ProcessHandle.info().totalCpuDuration()` for process CPU (and
-fails explicitly if unavailable), plus `Runtime.totalMemory() - freeMemory()`
-for used heap. Limits, scenes and input remain unchanged. Full-JDK runs can
-still retain JFR externally; the exact bundled-runtime probe does not expand the
-shipped module set solely to enable instrumentation.
-
-Evidence: `build/ci-fifth-macos-arm-diagnostics/performance/`,
-`build/mac-arm-fifth-pacing-analysis.json` and
-`build/mac-arm-fifth-visuals/REVIEW.md`.
-
-## ARM application-launch diagnostic
-
-The isolated LaunchServices copy of the actual ARM64 app passed all 22 windows
-with a 30-second diagnostic soak. It retained the shipped runtime, original
-assets and production JAR `d5499672…30af`, with the same 128 MiB heap cap and two
-processors visible to the JVM. The soak measured 51.432 frames/s and 4.835 ms
-mean painting; the slowest active scene measured 49.534 frames/s. Retained heap
-changed from 14,704,016 to 14,517,440 bytes. Independent native process sampling
-recorded a peak RSS of 266,448 KiB across 120 samples.
-
-All 28 rendered frames were inspected, including the core movement, jump, retry,
-idle menus, regions, monsters, guardians and soak. The authoritative completion
-record reports PASS with no failed scenes, and the external controller completed
-cleanup. This distinguishes the actual application context from the earlier
-raw-JVM timing failures without changing production timer behavior. This short
-diagnostic does not establish the full 180-second soak or Intel application result.
-
-Evidence: `build/ci-native-profile-arm-initialized/performance-native-app/`,
-including `completion.json`, `native-app.json`, `measurements.tsv`, native RSS
-samples and the frame-by-frame `root-review/` journal.
-
-The subsequent **full 180-second ARM64 application run passed all 22 windows**
-with the same production JAR, assets, runtime, heap and processor limits. The soak
-measured 51.080 frames/s, 5.039 ms mean painting and 45.546% of one CPU core;
-simulation advanced 180.017 seconds during 180.010 seconds of wall time. Every
-active scene exceeded 50 frames/s, with the slowest at 50.166, and the highest
-mean paint cost was 6.528 ms. Title and pause made no simulation progress or
-repaints during their six-second windows; their before/after images are identical.
-Their measured process CPU was 8.480% and 13.153%, respectively.
-
-Retained heap rose by 508,232 bytes, from 14,600,688 to 15,108,920, below the
-16 MiB growth limit. Independent exact-PID RSS sampling recorded a maximum of
-281,632 KiB (275.0 MiB) across 257 samples; this is a sampled maximum, not the OS
-high-water mark. All live native observations reported an active, visible,
-frontmost app at nice priority zero. All 28 audit frames and the additional native
-startup capture were independently inspected, including movement directions,
-jump, retry, all scene fixtures and the completed soak. Cleanup and the explicit
-completion record passed. No production timer or global policy change was needed.
-
-Full-run evidence: `build/ci-native-profile-arm-full/performance-native-app/`,
-including `independent-review.md` and `independent-review.json`. The Intel native
-application result and performance on other hardware remain unverified by this
-ARM64 pass; the earlier raw-JVM failures remain recorded above.
-
-## Comparing the two Mac launch routes
-
-Before the native source-cache correction, `./emberwood-kotlin` directly executed
-its private Java runtime. The native application pass above did not establish
-performance for that separate route. A same-runner comparison is available after
-building the production JAR, test classes and native package:
-
-```sh
-python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds 180
-```
-
-This runs the raw private-JDK process first, then an isolated native app through
-the existing LaunchServices driver. Both use the unchanged production JAR and
-test classes, the same 128 MiB heap/two-processor limits and full audit thresholds.
-Both use the external controller for real input and screenshots, with the audio
-readiness and exact-PID nonmodal-window guard before input. Neither uses JFR,
-extra rendering flags, resource-policy changes or production pacing changes.
-The raw route retains the source runtime while the app retains its shipped
-runtime; this measures the two actual launch contexts rather than attributing
-any difference to a single runtime or operating-system mechanism.
-
-Results are separated under `build/performance-launcher-comparison/raw-jvm/`
-and `native-app/`, with an aggregate `comparison.json`. Failed raw measurements
-remain failed even if the native app passes. The next launch is prevented if
-owned-process, input/capture or new-window cleanup cannot be established.
-Run `43710832465` completed both routes on the same ARM64 runner at production
-JAR `0d3d50e7…3b89`. Both completed all 22 windows and the full 180-second soak,
-with the same test classes, 128 MiB heap, two visible processors and 1024×648
-content. The direct JVM route failed every active frame-rate window; the native
-app passed all 22. The aggregate result correctly remains failed.
-
-| Route | Soak frames/s | Mean paint | Process CPU, one core | Sampled peak RSS |
-| --- | --- | --- | --- | --- |
-| Direct private-JDK JVM | 17.903 | 5.240 ms | 24.792% | 267,888 KiB |
-| Native app through LaunchServices | 51.662 | 6.388 ms | 54.733% | 275,664 KiB |
-
-Both routes kept simulation time aligned with wall time, had no retained heap
-growth, and held title/pause completely still. All 56 audit frames plus three
-startup/cleanup captures were independently inspected; the native startup capture
-catches a canvas before its first paint, followed by complete title frames.
-Both processes remained active and frontmost in live observations. The raw JVM
-had nice priority −10 and the app zero, with process policy zero for both. These
-observations establish a launch-context performance difference, not App Nap as
-its specific cause. No production timer change follows from this comparison.
-
-Evidence and exact PNG/metric journals are under
-`build/ci-launcher-comparison-arm-0d3d50e7/performance-launcher-comparison/`.
-This result motivated the shared cached native-app source launcher. The corrected
-source route uses the same builder, runtime recipe and signing policy as the
-download. `tools/test_source_mac_native.py` exercises actual first-run preparation,
-CLI failures, offline cache reuse and physical launch/close, then exports the exact
-app path for `mac_app_profile.py --app`. Its Mac CI validation is still pending;
-the historical comparison is not verification of the subsequently restored audio
-initialization order or the new source launcher.
-
-## Final Linux artifact review before the footer correction
-
-Run `43708730152` passed all 22 windows and the full 180-second soak on both Linux
-architectures at production JAR `d5499672…30af`. All 28 screenshots per platform
-were independently inspected, and both static-menu image pairs are identical.
-
-| Runner | Soak frames/s | Mean paint | Process CPU, one core | Retained heap before / after |
-| --- | --- | --- | --- | --- |
-| Linux x86-64 | 62.107 | 1.692 ms | 10.299% | 20,591,032 / 20,436,616 bytes |
-| Linux ARM64 | 62.178 | 1.745 ms | 10.732% | 20,102,984 / 20,083,656 bytes |
-
-The slowest active windows were 61.938 and 61.978 frames/s; the highest mean
-paint costs were 2.287 and 2.037 ms, respectively. Both ran with Java 25.0.5,
-128 MiB maximum heap, two visible processors and 1152×648 content. Physical
-movement, braking away from the world edge, jump, retry and pause recovered
-correctly. These CI hosts had no audio output line, so their CPU measurements
-exclude active audio playback. They also did not record process RSS; the heap
-cap is not a complete process-memory measurement.
-
-Evidence and independent frame/metric manifests are in
-`build/ci-final-linux-x64/build/performance/independent-review/` and
-`build/ci-final-linux-arm64/build/performance/independent-review/`. The known
-unavailable-audio footer inconsistency is visible in this older build; these
-passes are not relabeled as verification of its subsequent footer correction.
-
-## Final Linux production repeat
-
-Run `43712421975` passes all 22 windows and the full 180-second soak on both Linux
-architectures with production JAR `88283267…5bc1`, including the footer correction
-and original game/audio initialization order. Each downloaded package's embedded
-JAR was independently hashed. All 56 audit frames were inspected, including the
-complete idle-menu pairs, movement/jump/retry, all regions, monsters, guardians
-and soak; no new visual defect was found. Menu text was also checked at its
-original resolution. Both title/pause pairs remain pixel-identical.
-
-| Runner | Soak frames/s | Mean paint | Process CPU, one core | Retained heap before / after |
-| --- | --- | --- | --- | --- |
-| Linux x86-64 | 62.149 | 1.663 ms | 9.222% | 20,779,296 / 20,529,368 bytes |
-| Linux ARM64 | 62.155 | 1.915 ms | 11.527% | 20,093,816 / 20,344,936 bytes |
-
-The slowest active windows were 61.960 and 61.956 frames/s; the highest mean
-paint costs were 1.782 and 2.151 ms. Both retain the 128 MiB maximum heap,
-two visible processors and 1152×648 content area. As in the prior CI run, these
-performance hosts had no audio output line, and process RSS was not recorded.
-Separate final private-output CI `43716755578`, at the same game hash, passes
-all 56 physical sound-control cases across source/bundled runtimes on x86-64 and
-ARM64. All 336 WAVs and their waveform sheets were independently reviewed, as
-documented in `AUDIO.md`. This closes application-output coverage on ARM64; it
-does not retroactively add audio CPU cost to the performance measurements above.
-
-Evidence: `build/ci-final-8828-linux-{x64,arm64}/build/performance/independent-review/`,
-including metric checks, exact frame hashes and the visual journal.
-
-The final dependency-aware installer package/audio repeat `43719750356` also
-passes all 56 physical sound cases, with all 336 WAVs independently reviewed.
-Package review confirms identical production JAR/runtime bytes relative to these
-full-control/performance artifacts. Its updated installer, package checksums,
-PCM and physical-close evidence are retained separately in
-`build/ci-audio-dependencies-linux-{x64,arm64}/`; the earlier measurements above
-are not relabeled as new performance runs.
+The [historical performance record](history/performance-investigation.md) retains
+the failed Linux baseline, rejected RGB-buffer trial, bounded image-cache change,
+raw-JVM Mac pacing/JFR observations, microphone-initialization investigation,
+source/native launcher comparisons and complete 88283267 baseline. Those older
+failures were not relabeled as passes. Native launch and signing superseded the
+raw-JVM and permission-prompt routes; no busy-spin, global power-policy change
+or relaxed performance gate was shipped. The current Intel aggregate failure
+and short-interval limits are recorded above, not hidden in the archive.

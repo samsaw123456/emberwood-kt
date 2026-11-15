@@ -27,23 +27,23 @@ facilities or untested rows passed. No finite test set establishes zero bugs.
 
 ## Working checklist
 
-Current assessment (final platform verification remains open):
+Current assessment: final cross-platform verification remains open.
 
-A newly reproduced same-step jump release/re-press ordering defect is corrected
-in build `7d9668ed`, with seven actual-handler regressions passing (three failed
-on the old code). Full final-build revalidation remains open. The 88283267 results
-in the table are preserved baseline observations, not proof for the corrected build.
+Build `7d9668ed` fixes the observed same-step jump release/re-press ordering
+fault. Seven actual-handler regressions pass (three failed on the old code),
+and the full 60-test suite passes. Earlier build evidence is preserved separately;
+no pass is silently transferred across runnable game hashes.
 
 | Area | Evidence and remaining work |
 | --- | --- |
-| Core loop | Simulation and normal-rate native input complete all 20 levels, six guardians and 60 acorns. Final-commit CI at cacc4dc ends at 08:19 with one actual fall/retry, 201/378 gems and all 20 fireflies; its job succeeds. The d5499672 repeat separately records Java and wrapper exit 0. The earlier ce6 run remains historical evidence. |
-| Physics | Automated regressions cover jump/dash limits, collision sweeps, rising-platform carry, crumble/recovery, mushrooms and boss caps. Full native traversal supplements these; final platform control reruns remain open. |
-| Interaction | Every binding/state is inventoried. Final 88283267 Linux x64 and ARM64 source/bundled inventories and the Mac ARM native bundle pass all 280 rows with every rendered frame reviewed, actual fourteen-case audio proof and physical window close. Mac source uses explicit shared proof after full app-tree identity, source startup/close and performance checks; no second physical inventory is claimed. Intel review remains open. |
-| Navigation/camera | Original routes and menu choices are preserved. Ordinary/Gentle camera direction was visually reviewed; final platform rows remain open. |
-| State | Reset, pause, checkpoint treasure, boss defeat persistence and settings are covered by tests and native fixtures. Blocked audio initialization/shutdown has regressions; actual Linux Alt+F4 and both Mac architectures' Command+Q close the final main apps cleanly. Intel command inventory remains open after the capture-harness failure. |
-| Feel/accessibility | Original art/fonts, keyboard focus, alternate keys, sound and Gentle motion remain. Footer overlap and unavailable-audio status are corrected and inspected. Both Mac architectures pass modal-free ordinary onboarding; Both architectures now pass all fourteen physical audio cases with independently reviewed PCM. Actual PCM is software-output proof, not speaker-hardware testing; timing findings remain documented. |
-| Polish | Original resources are byte-verified. All regions, guardians, monsters and equipment were visually reviewed. The native twenty-level ending and every final Linux and Mac ARM control frame were inspected; Intel review remains open. |
-| Robustness/performance | Both dedicated Linux architectures and both Mac architectures' actual source/bundle 180-second profiles pass their measured budgets. All Mac performance frames were reviewed; Intel's early blank startup capture is explicitly distinguished from its subsequent normally rendered title and scenes. Fresh/offline/install/upgrade/removal and Zed loading were exercised. Both architectures pass the final installer/PCM/main-app repeat and clean Ubuntu dependency recovery; container dependency proof remains separate from desktop input. |
+| Core loop | Exact-build normal-rate native input completes all 20 levels, six guardians and 60 acorns in CI43725299181. All 55 images inspected; 08:19, one real fall/retry, 201/378 gems and all 20 fireflies. Job/command succeeds with JAR hash retained. |
+| Physics | Automated collision, platform, crumble, mushroom, dash and boss-cap regressions pass. Actual-handler jump-order tests fail before the fix and pass after it; native jump observations prove release cuts beyond gravity and no third-jump impulse. |
+| Interaction | Final Linux source/bundle on both architectures and macOS ARM bundle each pass all 280 cases with all 1,214 referenced frames inspected, fourteen actual audio cases and physical window close. Mac ARM source has exact-app shared proof; Intel final controls remain open. |
+| Navigation/camera | Original routes and menu choices preserved. Ordinary/Gentle camera motion and facing independently reviewed for all bindings on both final Linux architectures/source/bundle and macOS ARM. Final Intel rows remain open. |
+| State | Pause, restart, checkpoint gear, boss persistence, settings and held/focus cleanup have automated and native coverage. Final Linux source/bundle closes physically on both architectures; both macOS ARM native launch routes pass physical Command-Q and complete control review. |
+| Feel/accessibility | Original assets/fonts, keyboard focus, alternate keys and Gentle motion preserved. All eight Gentle menu bindings prove visible animation freeze/restoration. Final Linux audio passes on both CPUs and both macOS architectures pass fourteen actual PCM cases; unavailable-output six-state feedback separately inspected. |
+| Polish | All 2,107 migrated resources are hash-verified. Final native campaign, every Linux source/bundle inventory frame on both CPUs and all macOS ARM control frames inspected. No generic marketing interface added; Intel visual review remains explicit. |
+| Robustness/performance | Final Linux CI profiles and installer/runtime routes pass on both architectures; macOS ARM source and bundled profiles pass. Intel's first profile retained a failed 40.729 Java paints/second boss window; the repeat passed both Java-paint throughput profiles. These are not continuous native presentation-rate measurements. Repeated Intel Left checks fail, including ordinary Main in run 43741464146 with an independently bounded 357 ms hold: the own-window stream has a 3.123 s publication gap and then shows the fox at the left boundary. Scheduled repaint, disabled buffering and OpenGL did not correct the failure. Native input, window-query and presentation causes remain under investigation; complete Intel rendered controls remain open. Its independent fourteen-case audio repeat passes. Source offline cache, install/upgrade/remove and actual Zed task loading have evidence; fresh Ubuntu dependency recovery is separately recorded. |
 | Scope exclusions | Controller/touch, networking, accounts, camera switches and new easter eggs are not implemented in this parity port. The original hidden fireflies remain. |
 
 - Rules: preserve goals, camp progression, boss gates, win/replay; verify full route.

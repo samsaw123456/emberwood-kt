@@ -5,39 +5,140 @@ in [controls-audit.tsv](controls-audit.tsv). Every row has an explicit result;
 unverified platforms and missing audio evidence remain unverified. A simulation
 campaign does not mark physical controls passed.
 
-The recorded 88283267 results are retained as a baseline. A newer native jump
-trial exposed stale release input shortening an immediate re-press. Corrected
-build `7d9668ed` passes its automated regressions, but final physical verification
-is open until the complete inventory runs again. Every platform cell in the
-tracked table is explicitly unverified for the new build. Earlier passes are
-not transferred; its prior table is retained at
-`build/regressions/jump-order/controls-baseline-88283267.tsv`.
+The corrected runnable build is `7d9668ed`. Both Linux x64 source and bundled
+runtimes pass all **280 cases**, with clean exit and all **1,214 referenced frames**
+per run inspected. Exact disjoint reviewer journals are validated by
+`build/audit-{source,packaged}-7d9668ed-final/review/all-frames-reviewed.json`;
+complete results are in each `controls-reviewed.tsv` and `REVIEW.md`.
 
-The native audit injects OS input and captures before/during/after window frames.
-Its automatic assertions are followed by inspection of every referenced frame.
-Source results live in `build/audit/controls.tsv`; bundled-runtime results live
-in `build/audit-packaged/controls.tsv`. The complete inventory contains 280 cases. Final Linux x64 source and bundled
-records are `build/audit-source-88283267-final/controls-reviewed.tsv` and
-`build/audit-packaged-88283267-final/controls-reviewed.tsv`; both have complete
-rendered/audio evidence. Linux ARM64 source and bundled runs also have all 280
-cases and all 1,208 referenced frames reviewed, at
-`build/ci-final-8828-linux-arm64/build/{audit,audit-packaged}/controls-reviewed.tsv`.
-The original ARM runs had no output device. Separate exact-build checks now
-complete all fifteen audio-related rows and physical window close through
-`build/ci-audio-final-linux-arm64/build/audio-linux/`: fourteen physical audio
-cases per runtime, actual game-only virtual output, and real MainKt Alt+F4 with
-inspected frames and clean exit. This establishes software output, without a
-claim about speaker hardware.
+Fourteen physical M/Sound cases and 84 game-only PCM recordings per runtime
+supply actual output proof in
+`build/ci-audio-jump-fixed-linux-x64/build/audio-linux/{source,packaged}/independent-review/`.
+The corresponding `game-smoke/independent-review/` records actual MainKt
+movement, jump, pause and physical Alt+F4 with clean exit. The installed offline
+app additionally passed in `build/installed-user-audit-7d9668ed/`.
+This establishes software playback through an isolated virtual output, without
+claiming speaker-hardware testing.
 
-The final macOS ARM native app also passes all 280 rows, with all 1,208 frames
-reviewed, fourteen actual audio cases, and separately inspected physical
-Command+Q. Its consolidated record is
-`build/ci-native-final-macos-arm/build/controls-native-app/controls-reviewed.tsv`.
-The source column explicitly says **SHARED PROOF**: the complete cached source
-and packaged app trees match, including game, runtime, launcher configuration
-and signatures; actual source startup, physical close and performance were
-independently exercised. The full physical inventory ran on the bundle, not
-twice. Intel Mac's final control review remains open.
+Linux ARM64 source and bundled inventories also pass all **280 cases** in
+CI43725299181. All **1,214 frames per runtime** are independently reviewed, with
+exact disjoint journals and complete results at
+`build/ci-final-7d9668ed-linux-arm64/build/{audit,audit-packaged}/REVIEW.md`.
+The full inventory correctly displays unavailable sound on its device-free host;
+matching application bytes, runtime and physical bindings pass the separate
+actual PCM and real-main Alt+F4 checks in `build/ci-audio-jump-fixed-linux-arm64/`.
+
+macOS ARM passes all **280 native cases**, with every one of the **1,214 frames**
+independently inspected. Actual fourteen-case PCM, physical Command-Q and both
+source/packaged performance routes also pass. The complete result and exact
+supporting hashes are at
+`build/ci-native-final-7d9668ed-macos-arm/build/controls-native-app/REVIEW.md`.
+Its source column records shared proof from the identical app, as defined below.
+
+Intel's first source performance run measured 40.729 Java paints/second in one
+boss window, below the 45 paints/second budget; this is not native presentation
+FPS. Its control and audio stages did not run. That
+failure remains at `build/ci-native-final-7d9668ed-macos-intel/`. The separate
+instrumented repeat passed both performance routes and ran all 280 controls.
+One Left-arrow row failed: 21 captures retained the previous presentation nonce,
+extending the held input to 3.31 seconds and reaching the world boundary before
+release/braking could be proved. The other 279 assertions passed, but complete
+rendered control review remains pending. Evidence is preserved at
+`build/ci-native-repeat-7d9668ed-macos-intel/`; the failed row is not credited.
+
+The subsequent panel-marker run 43732405531 also fails only Left. Its retained
+first/latest rejected PNGs are byte-identical across the whole scene; the
+accepted frame arrives after the fox reaches the boundary. The marker-only
+hypothesis is disproved. The six inspected originals and timings are recorded in
+`build/ci-native-panel-marker-7d9668ed-macos-intel/build/controls-native-app/review/native-left-failure-review.json`.
+
+The six-case diagnostic 43736264766 reproduces Left's failure with independent
+snapshot and stream captures of the same old surface. Java reaches 140 fresh-nonce
+drawing callbacks before the stream presents the new surface approximately 3.06 seconds
+later; the callbacks precede Swing's final buffer publication. All 23 referenced
+frames and three additional originals were inspected;
+ordered Java and stream traces completed without data loss. The native
+publication/compositor/capture cause remains unresolved. The subsequent buffering
+comparison is recorded below; no full Intel pass is credited. Exact observations:
+`build/ci-capture-trace-7d9668ed-macos-intel/build/controls-capture-native-app/review/native-java-paint-review.json`.
+
+The comparison helper at commit `8048087` passed three local six-case routes:
+18 cases, all 75 referenced frames plus three startup originals inspected, and
+three clean exits. Actual buffering states were true/false/true on the same
+XRender backend and viewport. `build/audit-buffer-pair-7d9668ed/comparison-review.json`
+records the exact images, metadata and scope. Intel comparison 43738815451
+observed the same Metal backend with buffering true then false. The default
+repeated Left's failure; the disabled copy produced incomplete scenes and
+aborted before the sixth row, so the third launch was blocked. All retained
+control and diagnostic originals were inspected. The buffering override is not
+a correction, and final inventory verdicts remain unchanged. Exact receipts:
+`build/ci-buffer-comparison-7d9668ed-macos-intel/build/controls-capture-comparison/native-visual-review.json`.
+
+The test-only scheduled-repaint branch at `fb688398` passed six local physical
+cases, with all 25 referenced frames and startup inspected, exit 0 and 26 distinct
+request nonces. Failed requests now retain distinct originals and cannot let
+their old marker satisfy a later request. This does not change production
+rendering or the ordinary full audit's synchronous state observations. Local
+evidence: `build/audit-source-7d9668ed-scheduled-repaint/REVIEW.md`.
+
+Intel scheduled run 43740408807 still fails Left's strict held/release proof.
+The actual Metal backend retains enabled buffering, and all 25 requests used
+scheduled repaint with distinct nonces. The held capture returned 26 old frames
+before accepting the fox at the boundary after a 3.319-second physical hold.
+All 24 referenced frames, startup and 18 retained rejected originals were
+inspected; the other five filtered rows pass only their diagnostic scope.
+The independent stream presents the new nonce 2.858 seconds after its Java
+drawing callback, with 165 newer callbacks in between; the total recorded
+safepoint time in that gap is 93.928 ms. The 677 ordered Java callbacks and clean
+collection/cleanup do not establish native presentation responsiveness. Exact review:
+`build/ci-scheduled-7d9668ed-macos-intel/build/controls-capture-native-app/review/native-review.json`.
+Normal repaint scheduling has therefore not resolved the failure. The separate
+real-Main probe 43740419423 stopped before sending any input because its initial
+guard ran before the ordinary window was ready. Its owned process was terminated
+and the corrected bounded readiness check ran separately in 43741464146. That
+retry reached ordinary gameplay: A moved and stopped normally, but the first
+Left showed a 3.123-second gap between complete stream frames despite its
+independently bounded 356.831 ms OS-level hold/release. The next frame showed the
+fox at the boundary; later animation there is not braking proof. All 80 original
+images were independently reviewed. Main's held capture timed out reading
+AXFocusedWindow, whereas NativeAudit's snapshot path makes no such AX request.
+No causal conclusion follows from that difference. Cleanup again used SIGTERM,
+so physical Quit is not proved by this probe. Exact review:
+`build/ci-main-ready-7d9668ed-macos-intel/build/main-movement-native-app/independent-review/review.json`.
+
+The six-case CGL diagnostic 43741471213 also fails only Left. It actually uses
+`CGLGraphicsConfig`, enabled buffering and the two requested graphics properties.
+The first/latest rejected whole scenes remain at the start, while the accepted
+frame reaches the wall after a 3.355-second hold (21 stale reads then one fresh).
+All 24 referenced frames, startup and both rejected originals were inspected.
+Exact scope and hashes:
+`build/ci-opengl-7d9668ed-macos-intel/build/controls-capture-native-app/review/native-review.json`.
+The alternate backend has not resolved this failure. Production rendering flags
+are unchanged, and no full Intel pass is credited.
+
+The next ordinary-Main comparison is pending at `f095925`: snapshot run
+43743028454 and stream-only run 43743043450 both capture native stacks across the
+first Left input. The stream-only route omits synchronous window queries through
+the hold and early recovery, then requires held/released pixels at their actual
+presentation times. Missing or late frames remain failures.
+
+Current Intel audio separately passes all fourteen physical M/Sound cases and
+84 game-only recordings in run 43732427910. Both waveform sheets and both cleanup
+desktops were inspected, and all 119 original app entries match the passing
+source/packaged launch and performance evidence. The exact journal is
+`build/ci-audio-current-7d9668ed-macos-intel/build/audio-native-app/pcm/independent-review/review.json`.
+Complete physical control review is still required before the Intel rows pass.
+
+For macOS, a source column can say **SHARED PROOF** only after the complete
+cached source and packaged app trees match, including game, runtime, launcher
+configuration and signatures, and actual source startup, physical close and
+performance pass. The full physical inventory runs on the bundle; a second
+physical source inventory is never implied.
+
+The earlier 88283267 and d5499672 results remain build-specific baselines in
+[the verification history](history/verification-investigation.md). The old table is preserved at
+`build/regressions/jump-order/controls-baseline-88283267.tsv`. Fixtures used to
+reach individual states do not count as campaign traversal.
 
 Automatic assertions, visual inspection and audio-output verification are
 recorded separately in the coverage TSV and [verification record](VERIFICATION.md).
@@ -111,8 +212,13 @@ The test window uses a non-interactive black/white nonce marker to confirm that
 the desktop has presented the requested frame before capture. Twenty cells encode
 fixed anchors and a fresh 16-bit nonce; stale frames and ambiguous cells are
 rejected. A startup capture checks this before any player input. This test-only
-marker tolerates capture color conversion without weakening artwork checks. Saved PNGs retain the actual
-window size and letterboxing. The marker belongs only to the audit. Input and
+marker tolerates capture color conversion without weakening artwork checks.
+A zero-inset panel border paints it immediately after the actual game scene on
+every repaint, preserving layout and input geometry. First/latest rejected
+captures are retained in bounded memory during each case and written after
+input release. A stale capture never becomes a successful held or release frame.
+Saved PNGs retain the actual window size and letterboxing. The marker belongs
+only to the audit. Input and
 presentation latency tables are retained with the frames. Keyboard input uses
 an additional `awt-key-receipts.jsonl` journal of every delivered press/release,
 including key code, location, modifiers, event time and current case. It uses
