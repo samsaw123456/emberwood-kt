@@ -18,7 +18,8 @@ class WindowFixture:
     allowed = True
 
     def __init__(self, executable):
-        self.path = executable
+        # Match GameWindow's proc_pidpath contract, including /var -> /private/var.
+        self.path = executable.resolve()
 
     def executable(self, pid):
         return self.path if pid == 42 else Path("/another/app")
@@ -56,7 +57,11 @@ class KeyFixture:
 class BridgeTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.output = Path(self.temporary.name)
+        directory = Path(self.temporary.name)
+        (directory / "physical").mkdir()
+        self.output = directory / "alias"
+        # Exercise canonical identity on Linux too, rather than only on macOS.
+        self.output.symlink_to(directory / "physical", target_is_directory=True)
         self.executable = self.output / "game"
         self.windows = WindowFixture(self.executable)
         self.keys, self.captures = [], []
