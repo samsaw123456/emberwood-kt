@@ -10,6 +10,7 @@ jar=$2
 runtime=$3
 stage=$4
 version=$5
+application_name='Emberwood Kotlin'
 [[ -x "$java_home/bin/jpackage" ]] || fail 'The private JDK has no jpackage executable.'
 [[ -f "$jar" && -x "$runtime/bin/java" ]] || fail 'The game JAR and linked desktop runtime must exist.'
 [[ $version =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || fail 'The release version must contain three numeric components.'
@@ -17,7 +18,7 @@ version=$5
 major=$((10#${BASH_REMATCH[1]} + 1))
 bundle_version=$major.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}
 mkdir -p -- "$stage"
-app=$stage/Emberwood\ Kotlin.app
+app=$stage/$application_name.app
 [[ ! -e "$app" && ! -L "$app" ]] || fail "App output already exists: $app"
 work=$(mktemp -d "$stage/.mac-build.XXXXXX")
 cleanup() { rm -rf -- "$work"; }
@@ -38,12 +39,20 @@ for size in 16 32 128 256 512; do
 done
 iconutil -c icns "$iconset" -o "$work/Emberwood.icns" >&2
 cp -- "$jar" "$work/input/emberwood-kotlin.jar"
-"$java_home/bin/jpackage" --type app-image --name 'Emberwood Kotlin' --dest "$stage" \
+# libjli preserves an explicit apple.awt.application.name; otherwise it supplies
+# the main class (MainKt), which AWT uses for About/Hide/Quit item titles.
+# https://github.com/openjdk/jdk25u/blob/jdk-25.0.5%2B8/src/java.base/macosx/native/libjli/java_md_macosx.m#L778-L808
+# Keep inner quotes: jpackage parses each --java-options value a second time.
+"$java_home/bin/jpackage" --type app-image --name "$application_name" --dest "$stage" \
     --input "$work/input" --main-jar emberwood-kotlin.jar --main-class emberwood.MainKt \
     --runtime-image "$runtime" --app-version "$bundle_version" --vendor 'Emberwood contributors' \
     --mac-package-identifier org.emberwood.kotlin --mac-app-category adventure-games \
     --icon "$work/Emberwood.icns" --java-options -Xms32m --java-options -Xmx256m \
+    --java-options "-Dapple.awt.application.name=\"$application_name\"" \
     --java-options --enable-native-access=ALL-UNNAMED >&2
+config=$app/Contents/app/$application_name.cfg
+[[ $(grep -Fxc -- "java-options=-Dapple.awt.application.name=$application_name" "$config") == 1 ]] ||
+    fail 'The generated native launcher lost the complete application name.'
 printf '%s\n' 'Managed by Emberwood Kotlin installer' > "$app/Contents/Resources/.emberwood-kotlin-managed"
 plist_buddy=$(command -v PlistBuddy || printf '%s' /usr/libexec/PlistBuddy)
 "$plist_buddy" -c "Set :CFBundleShortVersionString $version" "$app/Contents/Info.plist" >&2

@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FAKE_TOOL = r"""#!/usr/bin/env python3
-import json, os, plistlib, shutil, sys, time
+import json, os, plistlib, shlex, shutil, sys, time
 from pathlib import Path
 name = Path(sys.argv[0]).name
 args = sys.argv[1:]
@@ -45,6 +45,13 @@ elif name == 'jpackage':
         (app / 'Contents' / folder).mkdir(parents=True, exist_ok=True)
     shutil.copyfile(Path(option('--input')) / 'emberwood-kotlin.jar', app / 'Contents/app/emberwood-kotlin.jar')
     shutil.copytree(option('--runtime-image'), app / 'Contents/runtime/Contents/Home')
+    java_options = [part for i, arg in enumerate(args) if arg == '--java-options'
+                    for part in shlex.split(args[i + 1])]
+    if os.environ.get('FIXTURE_OMIT_APPLICATION_NAME'):
+        java_options = [value for value in java_options if not value.startswith('-Dapple.awt.application.name=')]
+    (app / 'Contents/app/Emberwood Kotlin.cfg').write_text(
+        '[Application]\napp.mainclass=' + option('--main-class') + '\n[JavaOptions]\n' +
+        ''.join('java-options=' + value + '\n' for value in java_options))
     (app / 'Contents/MacOS/Emberwood Kotlin').write_text('fixture native launcher')
     (app / 'Contents/Info.plist').write_bytes(plistlib.dumps({
         'CFBundleVersion': option('--app-version'),
@@ -263,6 +270,50 @@ class SourceMacAppTests(unittest.TestCase):
         self.assertNotEqual(second, third)
         self.assertEqual(len(self.calls("jlink")), 1)
         self.assertEqual(len(self.calls("jpackage")), 3)
+
+    def test_source_cache_and_release_builder_preserve_complete_application_name(self):
+        cached = self.app()
+        config = "Contents/app/Emberwood Kotlin.cfg"
+        expected = "java-options=-Dapple.awt.application.name=Emberwood Kotlin"
+        self.assertEqual((cached / config).read_text().splitlines().count(expected), 1)
+        self.assertNotIn("Xdock:", (cached / config).read_text())
+        runtime = next((self.cache / "source-apps/runtimes").glob("*/runtime"))
+        stage = self.root / "release stage"
+        built = subprocess.run(
+            [
+                self.root / "tools/build_mac_app.sh",
+                self.jdk,
+                self.jar,
+                runtime,
+                stage,
+                "0.1.0",
+            ],
+            check=False,
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(built.returncode, 0, built.stderr)
+        release = Path(built.stdout.strip())
+        self.assertEqual(
+            (release / config).read_bytes(), (cached / config).read_bytes()
+        )
+        builder = self.root / "tools/build_mac_app.sh"
+        builder.write_text(builder.read_text() + "\n# Changed app recipe\n")
+        rebuilt = self.app()
+        self.assertNotEqual(rebuilt, cached)
+        self.assertEqual(
+            (rebuilt / config).read_bytes(), (cached / config).read_bytes()
+        )
+        self.assertEqual(len(self.calls("jlink")), 1)
+        self.assertEqual(len(self.calls("jpackage")), 3)
+
+    def test_missing_generated_application_name_cannot_publish_cached_app(self):
+        result = self.run_cache(FIXTURE_OMIT_APPLICATION_NAME="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("lost the complete application name", result.stderr)
+        self.assertEqual(list((self.cache / "source-apps/apps").iterdir()), [])
 
     def test_pinned_java25_linkable_runtime_needs_no_jmods_directory(self):
         shutil.rmtree(self.jdk / "jmods")

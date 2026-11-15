@@ -39,7 +39,7 @@ class NativeAppConfigTests(unittest.TestCase):
                 game.write_bytes(b"unchanged game fixture")
                 config = library / "Emberwood Kotlin.cfg"
                 config.write_text(
-                    "[Application]\napp.mainclass=emberwood.MainKt\napp.classpath=$APPDIR/emberwood-kotlin.jar\n[JavaOptions]\njava-options=-Xms32m\njava-options=-Xmx256m\njava-options=--enable-native-access=ALL-UNNAMED\n"
+                    "[Application]\napp.mainclass=emberwood.MainKt\napp.classpath=$APPDIR/emberwood-kotlin.jar\n[JavaOptions]\njava-options=-Xms32m\njava-options=-Xmx256m\njava-options=-Dapple.awt.application.name=Emberwood Kotlin\njava-options=--enable-native-access=ALL-UNNAMED\n"
                 )
                 classes = root / "test classes/emberwood"
                 classes.mkdir(parents=True)
@@ -60,6 +60,12 @@ class NativeAppConfigTests(unittest.TestCase):
                 self.assertIn("app.classpath=$APPDIR/native-audit.jar\n", configured)
                 self.assertIn(
                     "java-options=--enable-native-access=ALL-UNNAMED\n", configured
+                )
+                self.assertEqual(
+                    configured.splitlines().count(
+                        "java-options=-Dapple.awt.application.name=Emberwood Kotlin"
+                    ),
+                    1,
                 )
                 if mode == "performance":
                     self.assertIn("java-options=-Xmx128m\n", configured)
