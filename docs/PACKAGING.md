@@ -21,12 +21,29 @@ measurements; actual game profiling is recorded separately.
 
 Python 3.11 or newer is needed only by maintainers for packaging.
 `python3 tools/package_app.py` runs checks and creates a native application from
-the fat JAR plus `jlink`'s desktop runtime. Run packaging on each target operating
+the fat JAR plus `jlink`'s desktop runtime. `tools/link_runtime.sh` owns the common
+runtime recipe and `tools/build_mac_app.sh` owns the native Mac bundle recipe,
+including its adventure-game category. Run packaging on each target operating
 system/CPU. It does not cross-package a Linux JVM into a macOS application.
 Linux portable archives include a per-user installer. macOS ZIPs contain an app
 bundle created by the JDK's `jpackage` native launcher, icon, Info.plist, ad-hoc
 signature and per-user installer. Runtime and
 artwork are bundled unchanged with their notices. No network is used by the app.
+
+Source and Zed launches on macOS also use that native bundle recipe and
+LaunchServices. The first source build creates a private runtime/app cache;
+later launches verify and reuse it without network access. Game JAR, runtime,
+packaging-helper, icon and version changes invalidate the relevant cache. A
+failed or interrupted build is never published as a finished cache entry, and
+unmarked directories are not replaced. Linux keeps its direct private-Java
+launcher. The source route needs no Python or global developer-tool installation.
+
+`tools/sign_mac_app.sh` signs only the outer Mac app with Hardened Runtime and
+exactly two Boolean entitlements: JIT and library-validation exceptions for the
+bundled JVM. It verifies the resulting flags, strict bundle signature and exact
+policy. Release, source and configured audit copies share this helper; no
+recording entitlement is present. Installed and upgraded bundles are checked
+again by the package test.
 
 Installers stage replacements before moving the prior app, refuse to overwrite
 unmarked directories, handle spaces and desktop Exec escaping, and preserve
@@ -89,45 +106,42 @@ inspected: the native title and paused equipment menu are legible, the menu bar
 identifies Emberwood Kotlin, the Dock uses the existing fox-and-forest icon, and
 physical Command+Q removes the window and running indicator. Local evidence is
 `build/ci-fourth-macos-arm/build/bundle-launch-macos/visual-review.md`.
-Intel Mac installation/GUI verification failed because an unexpected microphone
-permission dialog blocked the game window. The game only requests audio output;
-the Java default mixer's eager input-device query is being investigated with an
-output-only diagnostic. No microphone access was granted. Neither Mac build is fully verified
-while its performance and control audits remain failed.
+Current Mac verification separates the actual LaunchServices app from raw-JVM
+audit launches. The native Apple Silicon app passed all 22 strict performance
+windows with the exact bundled runtime and a 180-second soak in run
+`43709103784`; every frame was inspected. The complete native-app control audit
+is a separate gate and must pass before claiming complete Mac coverage.
 
-Manual run `43703482967` tested the exact native default output's Java mixer name
-with the `ce6f5af4` audio lifecycle build. Apple Silicon startup was visibly
-prompt-free and audio initialization completed, but the read-only global
-accessibility lookup stopped PCM controls before any input. Intel still displayed
-the microphone dialog with its exact `Null Audio Device` name; both audio fixtures
-timed out before input. The named-mixer experiment is therefore insufficient and
-is not a shipped workaround. The production diagnostic exercises the output
-backend directly, with no mixer override, and uses a scoped game-PID
-accessibility lookup before physical input. The failed runs and full startup
-images remain in `build/ci-output-macos-{arm,intel}/mac-output-diagnostic/`.
+The ordered raw-JVM probes in run `43707637231` passed empty-window, audio-worker,
+window-before-audio and concurrent game startup on both architectures. Apple
+Silicon also passed all fourteen physical PCM cases with both source and packaged
+runtimes; all 168 WAVs were reviewed and no interior exact-zero span of at least
+2 ms recurred. See `docs/AUDIO.md` and `docs/PERFORMANCE.md` for measured results.
 
-Run `43705516072` tested the `bdba1782` AudioQueue output backend on both Mac
-architectures. Installed-SDK ABI comparisons and three output-only lifecycle
-cycles passed with both the source JDK and exact bundled runtime. Apple Silicon
-also passed actual startup and all fourteen PCM control cases for source and
-bundle; its screenshots and WAV evidence were inspected. Intel still displayed
-a microphone dialog during actual GUI startup, and the audio readiness guard
-stopped controls before any input. The no-window lifecycle result does not prove
-GUI readiness. The next diagnostic adds ordered empty-window/audio-worker
-experiments and exact-process stacks to isolate that remaining failure. Audio
-gaps and actual native-app performance also remain under investigation.
+The earlier Intel native app displayed a microphone permission dialog. Its own
+Java/native stacks identify the output-only AudioQueue start path waiting in
+`AudioDeviceCreateIOProcID`; this is not attributed to Java Sound in the current
+build. No microphone access was granted. Run `43710417047` showed that adding
+explicit `audio-input=false` to an ordinary ad-hoc signature did not resolve it.
+The detached dialog also survived app exit, so that run's old layer-0 cleanup
+receipt is not proof of a clear desktop; the actual screenshot and review retain
+that limitation. Cleanup now checks every visible window layer and never signals
+another process.
 
-Mac run `43700719691` compiled a test-only ScreenCaptureKit helper and passed the
-same fourteen mute and Sound-menu cases against both source and packaged Java
-on Apple Silicon, at the prior `82e43cb9` game build. The actual WAVs were inspected;
-short interior gaps remain under investigation, so this is control-output proof
-rather than a claim of perfect audio quality. Intel capture remains unverified.
-The filter contains only the launched game's process, with microphone capture
-disabled and no system-mix fallback. `tools/macos_audio_facility.py` first reports
-existing capture availability without requesting consent or changing permissions.
-The actual helper may request normal macOS consent; missing consent or incomplete
-PCM remains explicitly unverified. The final audio lifecycle build must repeat
-these native checks; Python routing checks on Linux do not establish Mac behavior.
+The Hardened Runtime trial in run `43712978391` then passed on both architectures:
+ordinary nonmodal native startup with no microphone dialog, all fourteen
+process-only PCM cases, unchanged game/runtime bytes and clean process/window
+shutdown. Actual signatures have flags `0x10002` and exactly `allow-jit=true` plus
+`disable-library-validation=true`; no recording entitlement is present. The
+actual desktop/startup/cleanup images and signature receipts were independently
+inspected under `build/ci-hardened-pcm-macos-{arm,intel}/mac-entitlement-trial/`.
+This validates the signing policy; final shared-builder installation and complete
+native control checks remain separate gates. The earlier experiments and primary
+references are preserved in `docs/MAC_SIGNING_TRIAL.md`. All native
+audio capture filters contain only the exact launched game PID, with microphone
+capture disabled and no system-mix fallback. Missing access, a prompt, incomplete
+PCM, or failed cleanup remains a failed/unverified result. Earlier named-mixer and
+ad-hoc experiments remain historical evidence, not shipped workarounds.
 
 ## Actual Linux package and launcher checks
 
@@ -151,9 +165,63 @@ the title and paused screen were inspected. A repeat under an isolated Openbox
 window manager pressed physical Alt+F4 and verified that the installed process
 exited. The original **Emberwood** desktop entry
 and repository remain unchanged. Local evidence is in `build/installed-audit/`,
-`build/installed-user-audit/`, `build/installed-physical-close-d5499672.log`, and
+`build/installed-user-audit-d5499672/`, `build/installed-physical-close-d5499672.log`, and
 `build/package-install-d5499672.log`. Four actual launcher frames were inspected:
 title, right movement, paused equipment and the absent window after Alt+F4.
-This installed candidate matches the checked
+That installed candidate matched the checked
 game JAR SHA-256
 `d5499672bb8cd4dd0708f5701d89cbf7dc81f4c3f480aa728c456c5b74bb30af`.
+
+## Native Linux CI artifact review
+
+Both native Linux jobs in run `43708730152` passed actual per-user installation,
+private Java 25.0.5 execution with deliberately invalid global Java variables,
+upgrade replacement, desktop metadata validation, removal with settings retained,
+and both 280-case source/bundled automatic audits. The x86-64 and ARM64 artifacts
+were downloaded and independently inspected locally. Their four supplied SHA-256
+files matched; runtime executables had the correct ELF machine type; Debian
+architecture/dependency/launcher metadata was correct; portable and Debian app
+trees were byte-identical (109 x86-64 / 108 ARM64 entries); all 2,107 embedded
+asset files matched the unchanged source assets. Both JARs were the audited
+`d5499672` build. Complete receipts and native job logs are under
+`build/ci-final-linux-{x64,arm64}/package-review.json` and `job.log`.
+These are candidate CI artifacts, not a claim that a public release was published.
+
+The same artifact review passed for final JAR `88283267` on both Linux
+architectures in run `43712421975`: four supplied checksums, correct ELF/Debian
+architectures, matching portable/Debian app trees, all 2,107 original asset files,
+and actual native install/upgrade/uninstall with private Java 25 and saved
+settings retained. Evidence is under
+`build/ci-final-8828-linux-{x64,arm64}/package-review.json` and `job.log`.
+
+The subsequent footer build `0d3d50e7` also passed local package
+install/upgrade/uninstall and actual offline launcher play/physical Alt+F4;
+`build/installed-user-audit-0d3d50e7/` records that build and its full-size screenshot
+review. Prior installed `d5499672` evidence is preserved separately under
+`build/installed-user-audit-d5499672/`.
+
+The final initialization-order build `88283267` passed the same real package
+installation, upgrade and removal checks, then the actual installed
+`gtk-launch org.emberwood.kotlin` entry with internet sockets denied and invalid
+global Java settings. Start, D, Space, Escape and physical Alt+F4 were exercised;
+the title, right movement, paused menu and absent window were inspected at full
+size. The Space still is after landing, so this smoke does not replace the
+exhaustive jump audit. Exact JAR/frame hashes and close receipts are preserved in
+`build/installed-user-audit-88283267/`; the installer log is
+`build/install-88283267.log`. The installed JAR matches
+`88283267eefaf417da4965a1248c1b70b9188effd71f6ee3f69cc2c1911e5bc1`.
+
+The same final JAR was launched from the actual **Play Emberwood Kotlin** task in
+a fresh isolated Zed 1.28.1 profile. The task picker loaded the checked-in
+configuration, the private Java runtime opened the game, and physical
+Start/D/Space/Escape/Alt+F4 exercised movement, jumping, pause and process exit.
+The terminal hid after success as configured. Seven original screens were
+inspected; hashes, runtime identity and review are in
+`build/zed-audit-88283267/`. All test-owned processes were cleaned up.
+
+Refactoring packaging to the shared runtime helper was also exercised with a real
+Linux rebuild and isolated install/upgrade/uninstall. The complete linked-runtime
+tree digest remained
+`a72adb7142f5e7dcaefa535143074f9a8848f42f83ddc4f1b138083235f8c8a4`, and the game JAR
+remained `88283267`. Receipts are `build/package-shared-{before,after}.json` and
+`build/install-shared-88283267.log`; the installed user app was refreshed.

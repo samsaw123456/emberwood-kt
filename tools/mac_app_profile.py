@@ -56,6 +56,7 @@ def configure_app(app, tests, output, seconds, input_socket, audit="performance"
             options.append(f"-Daudit.filter={TARGETED_CONTROLS_FILTER}")
     elif audit == "audio":
         main_class = "emberwood.AudioStateFixture"
+        options.append("-Xlog:gc,safepoint:stderr:time,uptime,level,tags")
     else:
         raise ValueError("Unknown native audit mode")
     replacements = {
@@ -260,14 +261,151 @@ def launch_profile(app, output, timeout, controller, audit="performance", second
             process.wait(timeout=5)
 
 
+def run_owned_check(app, command, output, timeout):
+    """Finish cleanup of only the copied app, including failed child diagnostics."""
+    from mac_bundle_smoke import cleanup_app
+    from mac_game_window import GameWindow
+
+    output.mkdir(parents=True, exist_ok=True)
+    native, windows = NativeStatus(), GameWindow()
+    baseline = windows.visible_registry()
+    metadata = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    executable = app / "Contents/MacOS" / metadata["CFBundleExecutable"]
+    try:
+        with (output / "driver.log").open("w") as log:
+            subprocess.run(
+                command,
+                check=True,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+            )
+    finally:
+        cleanup_app(app_pid(native, app), executable, windows, baseline, output)
+
+
+def validate_audio(output, app, game_digest):
+    """Require the entire physical-input PCM inventory and completed cleanup."""
+    summary = json.loads((output / "summary.json").read_text())
+    cleanup = json.loads((output / "cleanup.json").read_text())
+    results = json.loads((output / "results.json").read_text())
+    if not isinstance(summary, dict) or not isinstance(cleanup, dict):
+        raise TypeError("Native audio summary or cleanup evidence is malformed")
+    states = {"TITLE", "PLAYING", "PAUSED", "RESPAWNING", "CHAPTER_COMPLETE", "WON"}
+    expected = {(state, "m") for state in states} | {
+        (state, binding)
+        for state in ("TITLE", "PAUSED")
+        for binding in ("Mouse", "Return", "space", "KP_Enter")
+    }
+    checks = {
+        "full cue audible",
+        "long reference cue audible",
+        "mute stops audible cue",
+        "muted cue is silent",
+        "physical unmute feedback audible",
+        "restored cue audible",
+        "state retained and input focused",
+    }
+    if (
+        summary.get("result") != "PASS"
+        or summary.get("launch_method") != "LaunchServices native app"
+        or summary.get("game_jar_sha256") != game_digest
+        or Path(summary.get("game_jar", ""))
+        != app / "Contents/app/emberwood-kotlin.jar"
+        or Path(summary.get("java_executable", ""))
+        != app / "Contents/runtime/Contents/Home/bin/java"
+        or summary.get("microphone") is not False
+        or summary.get("global_audio_fallback") is not False
+        or not isinstance(summary.get("game_pid"), int)
+        or cleanup.get("pid") != summary.get("game_pid")
+        or cleanup.get("result") != "PASS"
+        or cleanup.get("new_windows_remaining") != []
+    ):
+        raise RuntimeError("Native audio identity, scope or cleanup evidence failed")
+    if not isinstance(results, dict) or len(results) != 14:
+        raise RuntimeError("Native audio did not complete all 14 physical bindings")
+    observed = set()
+    recordings = []
+    for label, row in results.items():
+        if not isinstance(row, dict) or not isinstance(row.get("checks"), dict):
+            raise TypeError(f"Native audio row is malformed: {label}")
+        state, binding = row.get("state"), row.get("binding")
+        if not isinstance(state, str) or not isinstance(binding, str):
+            raise TypeError(f"Native audio binding is malformed: {label}")
+        observed.add((state, binding))
+        if (
+            row.get("result") != "PASS"
+            or row.get("file_prefix") != label
+            or label != (state if binding == "m" else f"{state}-{binding}")
+            or set(row.get("checks", {})) != checks
+            or any(value is not True for value in row["checks"].values())
+        ):
+            raise RuntimeError(f"Native audio row is incomplete or failed: {label}")
+        for phase in ("full", "long", "cut", "muted", "unmute", "restored"):
+            path = output / f"{label}-{phase}.wav"
+            if not path.is_file() or path.stat().st_size <= 44:
+                raise RuntimeError(f"Native audio is missing captured PCM: {path.name}")
+            recordings.append(
+                {
+                    "path": path.name,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            )
+    if observed != expected:
+        raise RuntimeError("Native audio states or physical bindings are missing")
+    return {
+        "result": "PASS",
+        "cases": 14,
+        "expected_cases": 14,
+        "exception": None,
+        "game_pid": summary["game_pid"],
+        "cleanup": "PASS",
+        "recordings": recordings,
+    }
+
+
+def launch_audio(app, output, game_digest):
+    pcm = output / "pcm"
+    pcm.mkdir(parents=True, exist_ok=True)
+    # A failed new invocation must not reuse a prior successful receipt.
+    for name in ("summary.json", "results.json", "cleanup.json"):
+        (pcm / name).unlink(missing_ok=True)
+    run_owned_check(
+        app,
+        [
+            sys.executable,
+            ROOT / "tools/mac_audio_audit.py",
+            "--app",
+            app,
+            "--output",
+            pcm,
+        ],
+        output / "pcm-cleanup",
+        900,
+    )
+    outer_cleanup = json.loads((output / "pcm-cleanup/cleanup.json").read_text())
+    if (
+        not isinstance(outer_cleanup, dict)
+        or outer_cleanup.get("result") != "PASS"
+        or outer_cleanup.get("new_windows_remaining") != []
+    ):
+        raise RuntimeError("Native audio outer process cleanup failed")
+    return validate_audio(pcm, app, game_digest)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--audit",
-        choices=("performance", "controls", "controls-targeted"),
+        choices=("performance", "controls", "controls-targeted", "audio"),
         default="performance",
     )
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--app",
+        type=Path,
+        help="Audit this existing native app instead of the distribution app",
+    )
     parser.add_argument("--soak-seconds", type=int, default=30)
     args = parser.parse_args()
     if platform.system() != "Darwin":
@@ -281,22 +419,22 @@ def main():
     (output / "completion.json").unlink(missing_ok=True)
     version = (ROOT / "VERSION").read_text().strip()
     arch = {"arm64": "aarch64"}.get(platform.machine(), platform.machine())
-    original = ROOT / "dist" / f"emberwood-kotlin-{version}-macos-{arch}"
-    original /= "Emberwood Kotlin.app"
+    original = (
+        args.app
+        or ROOT
+        / "dist"
+        / f"emberwood-kotlin-{version}-macos-{arch}"
+        / "Emberwood Kotlin.app"
+    ).resolve()
     tests = ROOT / "build/classes/kotlin/test"
-    if (
-        not original.is_dir()
-        or not (
-            tests
-            / "emberwood"
-            / (
-                "PerformanceAudit.class"
-                if args.audit == "performance"
-                else "NativeAuditKt.class"
-            )
-        ).is_file()
-    ):
-        parser.error("Build the native package and performance test classes first")
+    entry = {
+        "performance": "PerformanceAudit.class",
+        "audio": "AudioStateFixture.class",
+        "controls": "NativeAuditKt.class",
+        "controls-targeted": "NativeAuditKt.class",
+    }[args.audit]
+    if not original.is_dir() or not (tests / "emberwood" / entry).is_file():
+        parser.error("Build the native package and requested audit test classes first")
     selected = default_output()
     runtime_digest = tree_digest(original / "Contents/runtime")
     jar_digest = hashlib.sha256(
@@ -305,6 +443,7 @@ def main():
     evidence = {
         "launch_method": "LaunchServices open -W -n",
         "audit": args.audit,
+        "original_app": str(original),
         "game_jar_sha256": jar_digest,
         "original_runtime_sha256": runtime_digest,
         "selected_output": selected,
@@ -326,13 +465,21 @@ def main():
         with (app / "Contents/Info.plist").open("rb") as stream:
             evidence["native_launcher"] = plistlib.load(stream)["CFBundleExecutable"]
         executable = app / "Contents/MacOS" / evidence["native_launcher"]
-        controller = controllers.enter_context(Controller(output, executable))
+        controller = (
+            controllers.enter_context(Controller(output, executable))
+            if args.audit != "audio"
+            else None
+        )
         configure_app(
-            app, tests, output, args.soak_seconds, controller.path, args.audit
+            app,
+            tests,
+            output,
+            args.soak_seconds,
+            controller.path if controller else None,
+            args.audit,
         )
         # Re-sign only the enclosing app: its already signed runtime stays identical.
-        subprocess.run(["codesign", "--force", "--sign", "-", app], check=True)
-        subprocess.run(["codesign", "--verify", "--deep", "--strict", app], check=True)
+        subprocess.run([ROOT / "tools/sign_mac_app.sh", app], check=True, timeout=90)
         if tree_digest(app / "Contents/runtime") != runtime_digest:
             raise RuntimeError("Copied private runtime changed during diagnostic setup")
         if (
@@ -346,24 +493,49 @@ def main():
         record = output / "native-app.json"
         record.write_text(json.dumps(evidence, indent=2) + "\n")
         try:
-            evidence["audit_completion"] = launch_profile(
-                app,
-                output,
-                args.soak_seconds + 360
-                if args.audit == "performance"
-                else 600
-                if args.audit == "controls-targeted"
-                else 2700,
-                controller,
-                args.audit,
-                args.soak_seconds,
+            evidence["audit_completion"] = (
+                launch_audio(app, output, jar_digest)
+                if args.audit == "audio"
+                else launch_profile(
+                    app,
+                    output,
+                    args.soak_seconds + 360
+                    if args.audit == "performance"
+                    else 600
+                    if args.audit == "controls-targeted"
+                    else 2700,
+                    controller,
+                    args.audit,
+                    args.soak_seconds,
+                )
             )
-            controller.close()
-            evidence["external_controller_cleanup"] = "PASS"
+            if controller:
+                controller.close()
+                evidence["external_controller_cleanup"] = "PASS"
+            if (
+                tree_digest(app / "Contents/runtime") != runtime_digest
+                or hashlib.sha256(
+                    (app / "Contents/app/emberwood-kotlin.jar").read_bytes()
+                ).hexdigest()
+                != jar_digest
+            ):
+                raise RuntimeError(
+                    "Native audit changed production game or runtime bytes"
+                )
+            if args.audit == "audio":
+                (output / "completion.json").write_text(
+                    json.dumps(evidence["audit_completion"], indent=2) + "\n"
+                )
             evidence["result"] = (
                 "PARTIAL_PASS" if args.audit == "controls-targeted" else "PASS"
             )
-        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        except (
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            subprocess.SubprocessError,
+        ) as error:
             evidence["result"] = "FAIL"
             evidence["error"] = str(error)
             raise

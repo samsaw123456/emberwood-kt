@@ -1,6 +1,6 @@
 # Native Mac audio-signing diagnostic
 
-Intel Mac startup still shows a microphone consent dialog while the output-only
+The earlier Intel Mac startup showed a microphone consent dialog while the output-only
 AudioQueue sink waits inside `AudioDeviceCreateIOProcID`. Raw-JVM context probes
 started successfully on a fresh runner; the installed native app did not. The
 exact app's Java/native stacks and desktop screenshots are retained locally.
@@ -17,8 +17,8 @@ The separate `hardened` mode tests one narrower hypothesis. It signs only the
 outer disposable app with `--options runtime`, `allow-jit=true`, and
 `disable-library-validation=true`. It includes no audio-input, sandbox, debugger,
 dyld-environment or unsigned-executable-memory entitlement. The original package,
-game JAR and bundled runtime remain unchanged. This is a candidate policy for
-measurement, not a demonstrated minimum or a shipped packaging change.
+game JAR and bundled runtime remain unchanged. This is a measured two-exception
+policy, not a demonstrated minimum.
 
 [Apple's Hardened Runtime documentation](https://developer.apple.com/documentation/security/hardened-runtime)
 says resource/runtime exceptions belong to the host executable, shared libraries
@@ -35,6 +35,19 @@ and [ARM64](https://github.com/openjdk/jdk25u/blob/jdk-25.0.5%2B8/src/hotspot/cp
 backed by [HotSpot's code cache](https://github.com/openjdk/jdk25u/blob/jdk-25.0.5%2B8/src/hotspot/share/code/codeCache.cpp#L383).
 These paths support the experiment; actual startup, output and lifecycle checks
 must establish whether this policy works on both supported Mac architectures.
+
+Run `43712978391` passed this trial on both Intel and Apple Silicon with production
+JAR `88283267`. Both actual native app startups were ordinary nonmodal game
+windows without a microphone prompt. Each architecture passed all fourteen
+physical mute/menu PCM cases using the exact app process and bundled runtime.
+Observed signatures were `0x10002` with exactly the two requested Boolean keys;
+game/runtime hashes were unchanged. Actual startup and post-exit desktops were
+inspected and all owned processes/windows were removed. Only a WindowServer-owned
+cursor surface at the CoreGraphics cursor level was excluded from cleanup.
+Evidence is in `build/ci-hardened-pcm-macos-{arm,intel}/mac-entitlement-trial/`.
+The shared production signing helper adopts that policy; final full app control
+runs are separate integration checks. The diagnostic remains available for
+regression comparison.
 
 Run the `Diagnose native output-only app signing` workflow with `mode=hardened`
 or the preserved `mode=false-only`. Locally on a Mac with a built package:

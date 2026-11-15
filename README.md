@@ -65,10 +65,17 @@ Java installation alone. Linux/macOS need their normal shell, `tar`, and either
 `./emberwood-kotlin --offline` runs an existing up-to-date build with no downloads.
 In Zed, choose the **Play Emberwood Kotlin** project task.
 
+On macOS, the first source build also prepares a native app in the private cache.
+Later terminal and Zed launches reuse it, including offline; changed game sources
+rebuild it automatically. No Python or system Java installation is needed for this
+route.
+
 For verification, set `JAVA_HOME` to the path printed by `tools/bootstrap.sh`, then
-run `./gradlew check fatJar`. Native control tests use `./gradlew nativeAudit` in a
-real desktop session (or Xvfb on Linux). `python3 tools/package_app.py --install`
-builds a native offline app and registers it for your user. See
+run `./gradlew check fatJar`. `python3 tools/package_app.py --install` builds a native
+offline app and registers it for your user. Linux control tests use
+`./gradlew nativeAudit` in a real desktop session or Xvfb. On macOS, run
+`python3 tools/mac_app_profile.py --audit controls` after packaging to test the
+actual native app. See
 [packaging and verification](docs/PACKAGING.md) for details and platform limits.
 
 Code is Apache-2.0. Imported art keeps its original licenses;

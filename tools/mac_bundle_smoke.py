@@ -19,6 +19,22 @@ from mac_game_window import GameWindow
 from mac_profile_observer import NativeStatus
 
 
+def launch_command(raw, app, data):
+    if raw is None:
+        return ["open", "-W", "-n", str(app), "--args", "--data-dir", str(data)]
+    command = json.loads(raw)
+    if (
+        not isinstance(command, list)
+        or not command
+        or not all(isinstance(value, str) and "\0" not in value for value in command)
+        or not Path(command[0]).is_absolute()
+    ):
+        raise ValueError(
+            "The launch command must be JSON argv with an absolute executable"
+        )
+    return [*command, "--data-dir", str(data)]
+
+
 def cleanup_app(pid, executable, windows, baseline, output):
     """Wait for this app and all new visible windows to leave before another probe."""
     record = {"pid": pid, "signals": [], "result": "UNVERIFIED"}
@@ -82,7 +98,15 @@ def main():
     parser.add_argument(
         "--output", type=Path, default=Path("build/bundle-launch-macos")
     )
+    parser.add_argument(
+        "--launch-command",
+        help="JSON argv for the source launcher; the positional app still fixes the exact expected native executable",
+    )
     args = parser.parse_args()
+    try:
+        launch_command(args.launch_command, args.app, "validation-only")
+    except (ValueError, TypeError) as error:
+        parser.error(str(error))
     if platform.system() != "Darwin":
         parser.error("Run this check on macOS.")
     app = args.app.resolve()
@@ -208,18 +232,26 @@ def main():
 
     process = None
     pid = None
+    observed_executable = None
     stacks_captured = False
+    command = None
     try:
         with tempfile.TemporaryDirectory(prefix="emberwood-bundle-save-") as data:
-            process = subprocess.Popen(
-                ["open", "-W", "-n", app, "--args", "--data-dir", data]
+            command = launch_command(args.launch_command, app, data)
+            (args.output / "launch.json").write_text(
+                json.dumps(
+                    {"argv": command, "expected_executable": str(executable)}, indent=2
+                )
+                + "\n"
             )
+            process = subprocess.Popen(command)
             window = None
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 pid = pid or app_pid(native, app)
                 if pid:
-                    if windows.executable(pid) != executable:
+                    observed_executable = windows.executable(pid)
+                    if observed_executable != executable:
                         raise RuntimeError(
                             "LaunchServices PID has a different executable"
                         )
@@ -259,6 +291,9 @@ def main():
                         {
                             "launcher": "LaunchServices open -W -n copied diagnostic .app",
                             "launcher_executable": str(executable),
+                            "launcher_argv": command,
+                            "observed_executable": str(observed_executable),
+                            "pid": pid,
                             "actions": [],
                             "result": "Startup captured; visual review must confirm no permission dialog. No keyboard or mouse input was sent.",
                         },
@@ -317,6 +352,9 @@ def main():
                     {
                         "launcher": "LaunchServices open -W -n installed .app",
                         "launcher_executable": str(executable),
+                        "launcher_argv": command,
+                        "observed_executable": str(observed_executable),
+                        "pid": pid,
                         "runtime": str(app / "Contents/runtime/Contents/Home"),
                         "actions": ["Return", "D", "Space", "Escape", "Command+Q"],
                         "result": "Native launch/close passed; screenshots require visual review",

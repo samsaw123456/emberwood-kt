@@ -33,6 +33,14 @@ jobs:
         run: |
           java_home=$(tools/bootstrap.sh)
           printf 'JAVA_HOME=%s\n' "$java_home" >> "$GITHUB_ENV"
+      - name: Lint launchers and verification tools
+        run: |
+          python3 -m pip install 'ruff==0.17.5' 'shellcheck-py==0.11.0.1'
+          ruff check tools
+          ruff format --check tools
+          shellcheck -x emberwood-kotlin tools/*.sh
+      - name: Exercise installer and native-tool fixtures
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
       - name: Check and build
         id: build
         run: ./gradlew --no-daemon check fatJar
@@ -47,57 +55,30 @@ jobs:
           for package in dist/emberwood-kotlin-*/; do
             python3 tools/test_package.py "$package"
           done
-      - name: Inspect macOS audio capture availability without recording
-        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
-        run: python3 tools/macos_audio_facility.py
-      - name: Check Mac modifier and wheel behavior before profiling
-        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
-        run: |
-          "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xms32m -Xmx256m -Daudit.output=build/audit-macos-targeted '-Daudit.filter=right-shift facing|after cooldown|Mouse wheel' -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.NativeAuditKt
+      - name: Verify the Mac source launcher and cached offline app
+        if: ${{ success() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
+        run: python3 tools/test_source_mac_native.py
       - name: Profile the low-resource configuration on Linux
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
         run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh "$JAVA_HOME/bin/java" -Xms32m -Xmx128m -XX:ActiveProcessorCount=2 --enable-native-access=ALL-UNNAMED -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.PerformanceAudit
-      - name: Profile the low-resource configuration on macOS
-        id: mac_performance
-        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
-        run: tools/run_mac_profile.sh build/performance
-      - name: Diagnose macOS scheduling with application resource policy
-        if: ${{ !cancelled() && runner.os == 'macOS' && steps.mac_performance.outcome == 'failure' }}
-        run: tools/run_mac_profile.sh build/performance-application-policy --application-policy -Dperformance.soakSeconds=30
-      - name: Capture only the game's Mac audio and audit physical mute
-        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
-        run: python3 tools/mac_audio_audit.py
-      - name: Repeat Mac audio assertions with the packaged runtime
-        if: ${{ !cancelled() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
-        run: python3 tools/audit_package.py --audio
-      - name: Retain Mac diagnostics before the control audits
-        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: emberwood-diagnostics-${{ matrix.os }}
-          path: |
-            build/performance/
-            build/performance-application-policy/
-            build/audit-macos-targeted/
-            build/bundle-launch-macos/
-            build/audio-audit-macos/
-            build/audio-audit-macos-packaged/
-          if-no-files-found: warn
+      - name: Profile the cached Mac source app with two processors and 128 MiB heap
+        if: ${{ success() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
+        run: python3 tools/mac_app_profile.py --app "$(cat build/source-mac-native/app-path.txt)" --audit performance --soak-seconds 180 --output build/performance-source-app
+      - name: Profile the shipped Mac app with two processors and 128 MiB heap
+        if: ${{ success() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
+        run: python3 tools/mac_app_profile.py --audit performance --soak-seconds 180
+      - name: Audit all controls through the native Mac app
+        if: ${{ success() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
+        run: python3 tools/mac_app_profile.py --audit controls
+      - name: Capture only the native Mac game's output and audit every sound control
+        if: ${{ success() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
+        run: python3 tools/mac_app_profile.py --audit audio
       - name: Audit controls through a real window on Linux
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
         run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh ./gradlew --no-daemon nativeAudit
-      - name: Audit controls through a real window on macOS
-        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
-        run: ./gradlew --no-daemon nativeAudit
-      - name: Validate installer on Linux
-        if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
-        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
       - name: Audit the packaged runtime on Linux
         if: ${{ !cancelled() && runner.os == 'Linux' && steps.package.outcome == 'success' }}
         run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh python3 tools/audit_package.py
-      - name: Audit the packaged runtime on macOS
-        if: ${{ !cancelled() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
-        run: python3 tools/audit_package.py
       - name: Retain verification and application artifacts
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -107,11 +88,12 @@ jobs:
             build/audit/
             build/audit-packaged/
             build/bundle-launch-macos/
-            build/audio-audit-macos/
-            build/audio-audit-macos-packaged/
+            build/source-mac-native/
+            build/audio-native-app/
             build/performance/
-            build/performance-application-policy/
-            build/audit-macos-targeted/
+            build/performance-native-app/
+            build/performance-source-app/
+            build/controls-native-app/
             build/reports/tests/
             dist/*.deb
             dist/*.tar.gz
@@ -141,6 +123,8 @@ jobs:
         run: |
           mkdir -p build/campaign-native
           ./gradlew --no-daemon check fatJar 2>&1 | tee build/campaign-native/build.log
+          sha256sum build/libs/emberwood-kotlin.jar > build/campaign-native/production.sha256
+          git rev-parse HEAD > build/campaign-native/commit.txt
       - name: Play twenty levels at the normal simulation rate
         shell: bash
         run: |

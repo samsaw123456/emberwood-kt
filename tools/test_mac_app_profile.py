@@ -53,6 +53,11 @@ class NativeAppConfigTests(unittest.TestCase):
                     self.assertIn("-XX:ActiveProcessorCount=2\n", configured)
                 else:
                     self.assertIn("java-options=-Xmx256m\n", configured)
+                    self.assertEqual(
+                        "-Xlog:gc,safepoint:stderr:time,uptime,level,tags"
+                        in configured,
+                        mode == "audio",
+                    )
                     if mode in {"controls", "controls-targeted"}:
                         self.assertIn("-Daudit.output=", configured)
                     self.assertEqual(

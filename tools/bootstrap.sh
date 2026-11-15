@@ -2,6 +2,8 @@
 # Prints a validated JDK home. All progress/error messages go to stderr.
 set -euo pipefail
 root=$(CDPATH="" cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=tools/cache_lock.sh
+source "$root/tools/cache_lock.sh"
 fail() { printf '%s\n' "Emberwood Kotlin: $*" >&2; exit 2; }
 valid_jdk() {
     [[ -x "$1/bin/java" && -x "$1/bin/javac" && -x "$1/bin/jlink" ]] || return 1
@@ -32,26 +34,14 @@ row=$(awk -F '\t' -v os="$os" -v arch="$arch" '$1==os && $2==arch {print $3 " " 
 [[ -n "$row" ]] || fail 'The verified Java download is unavailable for this platform.'
 expected=${row%% *}; url=${row#* }
 mkdir -p -- "$cache" || fail "Cannot write to $cache. Set EMBERWOOD_CACHE_DIR to a writable directory."
-lock=$cache/install.lock
-attempt=0
-while ! mkdir "$lock" 2>/dev/null; do
-    if [[ -r "$lock/pid" ]]; then
-        owner=$(cat "$lock/pid")
-        if [[ $owner =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then rm -rf -- "$lock"; continue; fi
-    elif [[ -n $(find "$lock" -maxdepth 0 -mmin +1 -print 2>/dev/null) ]]; then
-        rm -rf -- "$lock"; continue
-    fi
-    ((attempt+=1))
-    ((attempt < 900)) || fail 'Another Java preparation is still running. Try again when it finishes.'
-    sleep 1
-done
-printf '%s\n' "$$" > "$lock/pid"
+lock=$cache/install-file.lock
 work=""
-cleanup() { [[ -z "$work" ]] || rm -rf -- "$work"; rm -rf -- "$lock"; }
+cleanup() { [[ -z "$work" ]] || rm -rf -- "$work"; release_cache_lock "$lock"; }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+acquire_cache_lock "$lock" 'Java preparation'
 if valid_jdk "$jdk"; then printf '%s\n' "$jdk"; exit 0; fi
 work=$(mktemp -d "$cache/download.XXXXXX")
 printf '%s\n' 'Preparing private Java 25 (first launch only). Your system Java is unchanged.' >&2

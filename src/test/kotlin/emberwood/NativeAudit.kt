@@ -1613,6 +1613,17 @@ private class NativeAudit(
 
     private fun resizeAndClose(preferences: Path) {
         edt { frame.setSize(800, 600) }
+        // Cocoa publishes the native size before Swing's panel layout. Waiting for
+        // both prevents a filtered audit from cropping the preceding large frame.
+        await("Small-window client layout") {
+            edt {
+                val insets = frame.insets
+                frame.width == 800 &&
+                    frame.height == 600 &&
+                    panel.width == 800 - insets.left - insets.right &&
+                    panel.height == 600 - insets.top - insets.bottom
+            }
+        }
         case(
             "Resize 800x600 / mouse Start",
             GameState.TITLE,

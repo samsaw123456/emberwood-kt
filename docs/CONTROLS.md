@@ -21,12 +21,21 @@ alone are insufficient. These checks never approve a permission dialog. Missing
 audio remains unverified by the separate output audit.
 
 Copied macOS application audits can set `audit.inputSocket` to a private external
-test controller. The controller binds its guard, keyboard and capture sessions to
+test controller. The controller binds its guard, keyboard, pointer and capture sessions to
 the exact game PID, checks the ordinary native window, and uses its existing
 Accessibility and screen-capture access. The game exchanges IPC only; neither it
 nor the helper requests or grants permissions. `audit.root` and `audit.python`
 identify the checkout and interpreter when LaunchServices starts outside the
 repository. Without the socket property, the normal direct helper is unchanged.
+Pointer presses and wheel events require the verified main game window. Focus-loss
+tests register their separate same-process auxiliary window by its native ID;
+registration observes AX focus and native-window publication for up to two seconds,
+without input, and records every attempt. Movement and release there cannot
+authorize a new press. Cleanup attempts every owned button release after failed acknowledgements or
+disconnected sessions; any release failure is reported. This implementation
+does not mark native macOS controls passed until their actual run and frame review.
+The control audit writes `completion.json` after cleanup, with the actual case
+count, failures and any exception. A full pass requires all 280 cases and no filter.
 
 | Physical binding | State / expected effect |
 | --- | --- |
@@ -37,7 +46,7 @@ repository. Without the socket property, the normal direct helper is unchanged.
 | J | Playing: selected weapon once per press; locked or unequipped weapon does nothing |
 | R | Playing: hurt/retry then checkpoint; unavailable in other states |
 | Escape, P (separately) | Playing/retrying: pause; paused: resume; unavailable in title/results |
-| M | All states: mute/unmute output and displayed setting |
+| M | All states: toggle sound preference; mute/unmute available output; retain unavailable status if the device failed |
 | Tab, Left Shift+Tab, Right Shift+Tab | Menus: forward/backward focus and wrap |
 | Up, Down | Menus: previous/next enabled action |
 | Return, keypad Enter, Space | Menus: activate focused Start/Resume/Continue/Replay, gear or setting |
@@ -72,6 +81,8 @@ The test window uses a non-interactive 6×6 color marker to confirm that the des
 has presented the requested frame before capture. Saved PNGs retain the actual
 window size and letterboxing. The marker belongs only to the audit. Input and
 presentation latency tables are retained with the frames. Keyboard input uses
+an additional `awt-key-receipts.jsonl` journal of every delivered press/release,
+including key code, location, modifiers, event time and current case. It uses
 one persistent native connection; cold server startup is recorded separately
 from each delivered command. Linux batches use an independent X11 connection
 and verify the OS key state before acknowledging the request. Both platforms
@@ -97,6 +108,11 @@ interactive loading state, controller/touch mapping, camera switch, fullscreen
 shortcut, networking, accounts or text input. Window resize is supported with
 letterboxing at a minimum 800×600 size. OS window-management shortcuts belong to
 the operating system, not additional game commands.
+
+If output initialization fails, title/pause buttons and gameplay/result footers
+consistently display unavailable. Physical M still changes the saved preference,
+without claiming sound has become available. The separate missing-output audit
+checks this behavior in all six states using a real provider failure.
 
 Audio capture must target this game's output ports, never the microphone or
 system mix. A muted flag, rendered label, synthesized PCM unit test or successful

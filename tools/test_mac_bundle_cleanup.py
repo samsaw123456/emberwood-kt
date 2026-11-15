@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from mac_bundle_smoke import cleanup_app
+from mac_bundle_smoke import cleanup_app, launch_command
 from mac_game_window import GameWindow
 
 
@@ -27,6 +27,44 @@ class Windows:
 
     def visible_registry(self):
         return set()
+
+
+class LaunchCommandTests(unittest.TestCase):
+    def test_source_argv_keeps_spaces_and_adds_isolated_save_directory(self):
+        raw = json.dumps(["/private/project with spaces/emberwood-kotlin", "--offline"])
+        self.assertEqual(
+            launch_command(raw, Path("/expected.app"), "/private/save with spaces"),
+            [
+                "/private/project with spaces/emberwood-kotlin",
+                "--offline",
+                "--data-dir",
+                "/private/save with spaces",
+            ],
+        )
+        self.assertEqual(
+            launch_command(None, Path("/expected.app"), "/private/save"),
+            [
+                "open",
+                "-W",
+                "-n",
+                "/expected.app",
+                "--args",
+                "--data-dir",
+                "/private/save",
+            ],
+        )
+
+    def test_invalid_or_relative_launch_commands_are_rejected(self):
+        for raw in [
+            "[]",
+            '"shell command"',
+            '["relative"]',
+            "[null]",
+            '["/bin/a", 2]',
+            '["/bin/a\\u0000b"]',
+        ]:
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                launch_command(raw, Path("/expected.app"), "/private/save")
 
 
 class CleanupTests(unittest.TestCase):

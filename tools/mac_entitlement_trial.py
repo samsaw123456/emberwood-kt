@@ -13,10 +13,7 @@ import tempfile
 from pathlib import Path
 
 from diagnose_mac_output import record_signing
-from mac_app_profile import app_pid, configure_app
-from mac_bundle_smoke import cleanup_app
-from mac_game_window import GameWindow
-from mac_profile_observer import NativeStatus
+from mac_app_profile import configure_app, run_owned_check
 from package_integrity import tree_digest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,25 +95,6 @@ def sign_without_input(app, entitlements, output, expected, mode="false-only"):
         raise RuntimeError(
             "Diagnostic signing changed production runtime or game bytes"
         )
-
-
-def run_owned_check(app, command, output, timeout):
-    output.mkdir(parents=True, exist_ok=True)
-    native, windows = NativeStatus(), GameWindow()
-    baseline = windows.visible_registry()
-    metadata = plistlib.loads((app / "Contents/Info.plist").read_bytes())
-    executable = app / "Contents/MacOS" / metadata["CFBundleExecutable"]
-    try:
-        with (output / "driver.log").open("w") as log:
-            subprocess.run(
-                command,
-                check=True,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                timeout=timeout,
-            )
-    finally:
-        cleanup_app(app_pid(native, app), executable, windows, baseline, output)
 
 
 def main():

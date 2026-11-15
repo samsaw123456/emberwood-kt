@@ -5,7 +5,6 @@ import gzip
 import hashlib
 import os
 import platform
-import plistlib
 import shutil
 import subprocess
 import tarfile
@@ -25,85 +24,6 @@ def checksum(path):
     with path.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     path.with_name(path.name + ".sha256").write_text(f"{digest}  {path.name}\n")
-
-
-def build_mac_app(java_home, jar, runtime, stage, version):
-    """Use the JDK's native launcher and standard signed macOS bundle layout."""
-    # CFBundleVersion cannot begin with zero. Keep a monotonic internal build
-    # version while retaining the release version in CFBundleShortVersionString.
-    bundle_components = version.split(".")
-    bundle_components[0] = str(int(bundle_components[0]) + 1)
-    bundle_version = ".".join(bundle_components)
-    iconset = stage / "Emberwood.iconset"
-    iconset.mkdir()
-    source_icon = ROOT / "src/main/resources/assets/app/emberwood.png"
-    for size in (16, 32, 128, 256, 512):
-        for scale in (1, 2):
-            suffix = "@2x" if scale == 2 else ""
-            call(
-                "sips",
-                "-z",
-                size * scale,
-                size * scale,
-                source_icon,
-                "--out",
-                iconset / f"icon_{size}x{size}{suffix}.png",
-                stdout=subprocess.DEVNULL,
-            )
-    icon = stage / "Emberwood.icns"
-    call("iconutil", "-c", "icns", iconset, "-o", icon)
-    library = stage / "package-input"
-    library.mkdir()
-    shutil.copy2(jar, library / "emberwood-kotlin.jar")
-    call(
-        java_home / "bin/jpackage",
-        "--type",
-        "app-image",
-        "--name",
-        NAME,
-        "--dest",
-        stage,
-        "--input",
-        library,
-        "--main-jar",
-        "emberwood-kotlin.jar",
-        "--main-class",
-        "emberwood.MainKt",
-        "--runtime-image",
-        runtime,
-        "--app-version",
-        bundle_version,
-        "--vendor",
-        "Emberwood contributors",
-        "--mac-package-identifier",
-        "org.emberwood.kotlin",
-        "--icon",
-        icon,
-        "--java-options",
-        "-Xms32m",
-        "--java-options",
-        "-Xmx256m",
-        "--java-options",
-        "--enable-native-access=ALL-UNNAMED",
-    )
-    app = stage / (NAME + ".app")
-    (app / "Contents/Resources" / MARKER).write_text(
-        "Managed by Emberwood Kotlin installer\n"
-    )
-    plist = app / "Contents/Info.plist"
-    with plist.open("rb") as stream:
-        metadata = plistlib.load(stream)
-    metadata["CFBundleShortVersionString"] = version
-    metadata["LSMinimumSystemVersion"] = "12.0"
-    with plist.open("wb") as stream:
-        plistlib.dump(metadata, stream)
-    # The native launcher keeps its signature in Mach-O, never in script xattrs.
-    call("codesign", "--force", "--deep", "--sign", "-", app)
-    call("codesign", "--verify", "--deep", "--strict", app)
-    for temporary in (iconset, library, runtime):
-        shutil.rmtree(temporary)
-    icon.unlink()
-    return app
 
 
 def build_deb(app, version, arch, dist):
@@ -214,19 +134,12 @@ def build_package(skip_build=False, install=False):
         runtime = (
             stage / "linked-runtime" if system == "Darwin" else content / "runtime"
         )
-        call(
-            java_home / "bin/jlink",
-            "--add-modules",
-            "java.desktop,java.logging,java.prefs,jdk.crypto.ec",
-            "--strip-debug",
-            "--no-header-files",
-            "--no-man-pages",
-            "--compress=zip-6",
-            "--output",
-            runtime,
-        )
+        call(ROOT / "tools/link_runtime.sh", java_home, runtime)
         if system == "Darwin":
-            app = build_mac_app(java_home, jar, runtime, stage, version)
+            call(
+                ROOT / "tools/build_mac_app.sh", java_home, jar, runtime, stage, version
+            )
+            shutil.rmtree(runtime)
         else:
             library = content / "lib"
             executable = content / "bin"

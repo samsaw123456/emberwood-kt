@@ -18,46 +18,38 @@ def main():
         help="Run the native Mac PCM audit with the bundled runtime",
     )
     args = parser.parse_args()
-    version = (ROOT / "VERSION").read_text().strip()
     system = platform.system()
-    target = "macos" if system == "Darwin" else "linux"
-    arch = {"arm64": "aarch64", "amd64": "x86_64"}.get(
-        platform.machine(), platform.machine()
-    )
-    package = ROOT / "dist" / f"emberwood-kotlin-{version}-{target}-{arch}"
-    app = package / (
-        "Emberwood Kotlin.app" if system == "Darwin" else "Emberwood Kotlin"
-    )
-    content = app / "Contents" if system == "Darwin" else app
-    java = content / (
-        "runtime/Contents/Home/bin/java" if system == "Darwin" else "runtime/bin/java"
-    )
-    jar = content / (
-        "app/emberwood-kotlin.jar" if system == "Darwin" else "lib/emberwood-kotlin.jar"
-    )
-    tests = ROOT / "build/classes/kotlin/test"
-    if not java.is_file() or not jar.is_file() or not tests.is_dir():
-        raise SystemExit(
-            "Build test classes and the native package before auditing it."
-        )
-    if args.audio:
-        if system != "Darwin":
-            parser.error("The bundled native PCM capture uses macOS ScreenCaptureKit.")
+    if system == "Darwin":
         subprocess.run(
             [
                 sys.executable,
-                str(ROOT / "tools/mac_audio_audit.py"),
-                "--java",
-                str(java),
-                "--jar",
-                str(jar),
+                ROOT / "tools/mac_app_profile.py",
+                "--audit",
+                "audio" if args.audio else "controls",
                 "--output",
-                str(ROOT / "build/audio-audit-macos-packaged"),
+                ROOT
+                / "build"
+                / ("audio-audit-macos-packaged" if args.audio else "audit-packaged"),
             ],
             cwd=ROOT,
             check=True,
         )
         return
+    if args.audio:
+        parser.error("The bundled native PCM capture uses macOS ScreenCaptureKit.")
+    version = (ROOT / "VERSION").read_text().strip()
+    arch = {"arm64": "aarch64", "amd64": "x86_64"}.get(
+        platform.machine(), platform.machine()
+    )
+    package = ROOT / "dist" / f"emberwood-kotlin-{version}-linux-{arch}"
+    app = package / "Emberwood Kotlin"
+    java = app / "runtime/bin/java"
+    jar = app / "lib/emberwood-kotlin.jar"
+    tests = ROOT / "build/classes/kotlin/test"
+    if not java.is_file() or not jar.is_file() or not tests.is_dir():
+        raise SystemExit(
+            "Build test classes and the native package before auditing it."
+        )
     output = ROOT / "build/audit-packaged"
     output.mkdir(parents=True, exist_ok=True)
     subprocess.run(

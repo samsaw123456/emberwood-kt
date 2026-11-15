@@ -11,6 +11,7 @@ case ${1:-} in
         printf '%s\n' 'Emberwood Kotlin' 'Usage: ./emberwood-kotlin [--build | --offline] [game options]' \
             'First source launch downloads a private Java 25 and builds the game.' \
             'Later launches rebuild changed game sources automatically, including from Zed.' \
+            'On macOS, a cached native app keeps source launches responsive and works offline.' \
             'Bundled application downloads need no Java, Gradle or developer tools.' \
             '  --build     prepare the game without opening a window' \
             '  --offline   use an existing build without downloading anything'
@@ -30,5 +31,32 @@ if $build_only || $needs_build; then
     printf '%s\n' 'Building Emberwood Kotlin. Later launches run directly and work offline.' >&2
     ./gradlew --console=plain --no-daemon fatJar
 fi
-if $build_only; then printf '%s\n' 'Ready. Open ./emberwood-kotlin to play.'; exit 0; fi
+if $build_only; then
+    if [[ $(uname -s) == Darwin ]]; then tools/source_mac_app.sh "$java_home" "$jar" >/dev/null; fi
+    printf '%s\n' 'Ready. Open ./emberwood-kotlin to play.'
+    exit 0
+fi
+if [[ $(uname -s) == Darwin && ( $# == 0 || ( $# == 2 && ${1:-} == --data-dir ) ) ]]; then
+    # Keep argument errors, version output and genuine headless errors on the existing CLI.
+    probe_status=0
+    "$java_home/bin/java" "$root/tools/LauncherDesktopProbe.java" || probe_status=$?
+    if ((probe_status != 0 && probe_status != 3)); then exit "$probe_status"; fi
+    if ((probe_status == 0)); then
+        app=$(tools/source_mac_app.sh "$java_home" "$jar")
+        if (($# == 2)) && [[ $2 != /* ]]; then set -- --data-dir "$root/$2"; fi
+        # LaunchServices owns the GUI process. Its exit status is not the app JVM's status.
+        open_help=$(open -h 2>&1 || true)
+        launch_status=0
+        if [[ $open_help == *--stdout* && $open_help == *--stderr* ]]; then
+            session=$(mktemp -d "${app%/*}/launch.XXXXXX")
+            printf 'Native app logs: %s\n' "$session" >&2
+            open -W -n --stdout "$session/stdout.log" --stderr "$session/stderr.log" "$app" --args "$@" || launch_status=$?
+            [[ ! -s "$session/stdout.log" ]] || cat "$session/stdout.log"
+            [[ ! -s "$session/stderr.log" ]] || cat "$session/stderr.log" >&2
+        else
+            open -W -n "$app" --args "$@" || launch_status=$?
+        fi
+        exit "$launch_status"
+    fi
+fi
 exec "$java_home/bin/java" -Xms32m -Xmx256m --enable-native-access=ALL-UNNAMED -jar "$jar" "$@"

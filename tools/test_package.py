@@ -4,11 +4,33 @@ import argparse
 import os
 import platform
 import plistlib
+import re
 import subprocess
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def verify_mac_signature(app):
+    subprocess.run(["codesign", "--verify", "--deep", "--strict", app], check=True)
+    details = subprocess.run(
+        ["codesign", "--display", "--verbose=4", app],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    flags = re.search(r"flags=0x([0-9a-fA-F]+)", details.stdout + details.stderr)
+    assert flags and int(flags[1], 16) & 0x10000, "Hardened Runtime is missing"
+    actual = subprocess.check_output(
+        ["codesign", "--display", "--entitlements", ":-", app]
+    )
+    policy = plistlib.loads(actual)
+    expected = plistlib.loads(
+        (ROOT / "tools/mac_runtime_entitlements.plist").read_bytes()
+    )
+    assert policy == expected and all(type(value) is bool for value in policy.values())
+    print("PASS: actual Hardened Runtime signature and exact output-only entitlements")
 
 
 def main():
@@ -38,6 +60,10 @@ def main():
                 == (ROOT / "VERSION").read_text().strip()
             )
             assert int(metadata["CFBundleVersion"].split(".")[0]) > 0
+            assert (
+                metadata["LSApplicationCategoryType"]
+                == "public.app-category.adventure-games"
+            )
             launcher = app / "Contents/MacOS" / executable
         else:
             launcher = app / "bin/emberwood-kotlin"
@@ -52,9 +78,7 @@ def main():
         assert (ROOT / "VERSION").read_text().strip() in version, version
         if mac:
             subprocess.run(["plutil", "-lint", app / "Contents/Info.plist"], check=True)
-            subprocess.run(
-                ["codesign", "--verify", "--deep", "--strict", app], check=True
-            )
+            verify_mac_signature(app)
             subprocess.run(
                 ["open", "-W", "-n", app, "--args", "--version"],
                 env=env,
@@ -82,6 +106,8 @@ def main():
         subprocess.run([installer], env=env, check=True, timeout=60)
         assert not (app / "obsolete.txt").exists()
         assert settings.read_text() == saved_preferences
+        if mac:
+            verify_mac_signature(app)
         subprocess.run([launcher, "--version"], env=env, check=True, timeout=60)
         subprocess.run([installer, "--uninstall"], env=env, check=True, timeout=60)
         assert not app.exists()

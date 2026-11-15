@@ -24,12 +24,12 @@ Current assessment (final platform verification remains open):
 
 | Area | Evidence and remaining work |
 | --- | --- |
-| Core loop | Both simulation and normal-rate native input complete all 20 levels, all six guardians and 60 acorns. Native victory records one actual fall/retry, 199/378 gems and all 20 fireflies. |
+| Core loop | Both simulation and normal-rate native input complete all 20 levels, all six guardians and 60 acorns. The exact d5499672 native repeat ends at 08:19 with one actual fall/retry, 201/378 gems and all 20 fireflies; Java and wrapper both exit 0. The earlier ce6 run remains historical evidence. |
 | Physics | Automated regressions cover jump/dash limits, collision sweeps, rising-platform carry, crumble/recovery, mushrooms and boss caps. Full native traversal supplements these; final platform control reruns remain open. |
-| Interaction | Every binding/state is inventoried. The persistent OS injector fixes measured test-delivery delays; strengthened jump and wheel frames need the final complete inventory rerun. |
+| Interaction | Every binding/state is inventoried. The d549 Linux source/bundled inventories passed all 280 rows with rendered and audio proof. The final unavailable-audio status fix is undergoing another complete inventory run. |
 | Navigation/camera | Original routes and menu choices are preserved. Ordinary/Gentle camera direction was visually reviewed; final platform rows remain open. |
-| State | Reset, pause, checkpoint treasure, boss defeat persistence and settings are covered by tests and native fixtures. Blocked audio initialization/shutdown now has two regression tests; rebuilt app Quit still needs platform rechecks. |
-| Feel/accessibility | Original art/fonts, keyboard focus, alternate keys, sound and Gentle motion remain. Footer overlap is corrected and inspected; final Mac output-device and modal-free onboarding checks remain open. |
+| State | Reset, pause, checkpoint treasure, boss defeat persistence and settings are covered by tests and native fixtures. Blocked audio initialization/shutdown has regression tests; d549 Linux native campaign exits cleanly and its installed app closes through physical Alt+F4. Mac shutdown remains unverified. |
+| Feel/accessibility | Original art/fonts, keyboard focus, alternate keys, sound and Gentle motion remain. Footer overlap and unavailable-audio status are corrected and inspected; final Mac output-device and modal-free onboarding checks remain open. |
 | Polish | Original resources are byte-verified. All regions, guardians, monsters and equipment were visually reviewed. The native twenty-level ending was inspected; final platform control evidence still needs consolidation. |
 | Robustness/performance | Both dedicated Linux architectures passed the prior full matrix. Mac timer pacing and Intel output initialization are under investigation; these are not counted as passes. Fresh/offline/install/upgrade/removal and Zed loading were exercised. |
 | Scope exclusions | Controller/touch, networking, accounts, camera switches and new easter eggs are not implemented in this parity port. The original hidden fireflies remain. |

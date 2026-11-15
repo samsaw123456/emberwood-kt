@@ -93,6 +93,11 @@ contain three interior silence gaps of 21.75–43.44 ms. Capture timestamps are
 continuous at those locations, but the cause is not yet established. These PCM
 fixtures launch Java directly; they do not establish native app scheduling.
 `independent-review.md` and `continuity-review.json` retain the exact observations.
+The later `d5499672` repeat in run `43707637231` passes all 28 source/bundled
+control cases, with no interior exact-zero span of at least 2 ms in any of its
+168 recordings. The older gaps did not recur; that does not establish their
+cause. Its capture timestamp discontinuities occur after the affected short cues
+have ended, and are recorded separately under `build/ci-contexts-macos-arm/`.
 
 On Intel, the standalone queue probes pass, but the actual game window still
 produces a microphone permission dialog and audio initialization remains pending.

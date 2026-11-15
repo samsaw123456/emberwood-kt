@@ -288,3 +288,122 @@ shipped module set solely to enable instrumentation.
 Evidence: `build/ci-fifth-macos-arm-diagnostics/performance/`,
 `build/mac-arm-fifth-pacing-analysis.json` and
 `build/mac-arm-fifth-visuals/REVIEW.md`.
+
+## ARM application-launch diagnostic
+
+The isolated LaunchServices copy of the actual ARM64 app passed all 22 windows
+with a 30-second diagnostic soak. It retained the shipped runtime, original
+assets and production JAR `d5499672…30af`, with the same 128 MiB heap cap and two
+processors visible to the JVM. The soak measured 51.432 frames/s and 4.835 ms
+mean painting; the slowest active scene measured 49.534 frames/s. Retained heap
+changed from 14,704,016 to 14,517,440 bytes. Independent native process sampling
+recorded a peak RSS of 266,448 KiB across 120 samples.
+
+All 28 rendered frames were inspected, including the core movement, jump, retry,
+idle menus, regions, monsters, guardians and soak. The authoritative completion
+record reports PASS with no failed scenes, and the external controller completed
+cleanup. This distinguishes the actual application context from the earlier
+raw-JVM timing failures without changing production timer behavior. This short
+diagnostic does not establish the full 180-second soak or Intel application result.
+
+Evidence: `build/ci-native-profile-arm-initialized/performance-native-app/`,
+including `completion.json`, `native-app.json`, `measurements.tsv`, native RSS
+samples and the frame-by-frame `root-review/` journal.
+
+The subsequent **full 180-second ARM64 application run passed all 22 windows**
+with the same production JAR, assets, runtime, heap and processor limits. The soak
+measured 51.080 frames/s, 5.039 ms mean painting and 45.546% of one CPU core;
+simulation advanced 180.017 seconds during 180.010 seconds of wall time. Every
+active scene exceeded 50 frames/s, with the slowest at 50.166, and the highest
+mean paint cost was 6.528 ms. Title and pause made no simulation progress or
+repaints during their six-second windows; their before/after images are identical.
+Their measured process CPU was 8.480% and 13.153%, respectively.
+
+Retained heap rose by 508,232 bytes, from 14,600,688 to 15,108,920, below the
+16 MiB growth limit. Independent exact-PID RSS sampling recorded a maximum of
+281,632 KiB (275.0 MiB) across 257 samples; this is a sampled maximum, not the OS
+high-water mark. All live native observations reported an active, visible,
+frontmost app at nice priority zero. All 28 audit frames and the additional native
+startup capture were independently inspected, including movement directions,
+jump, retry, all scene fixtures and the completed soak. Cleanup and the explicit
+completion record passed. No production timer or global policy change was needed.
+
+Full-run evidence: `build/ci-native-profile-arm-full/performance-native-app/`,
+including `independent-review.md` and `independent-review.json`. The Intel native
+application result and performance on other hardware remain unverified by this
+ARM64 pass; the earlier raw-JVM failures remain recorded above.
+
+## Comparing the two Mac launch routes
+
+The README's `./emberwood-kotlin` source launcher directly executes its private
+Java runtime. The native application pass above does not establish current
+performance for that separate route. A same-runner comparison is available after
+building the production JAR, test classes and native package:
+
+```sh
+python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds 180
+```
+
+This runs the raw private-JDK process first, then an isolated native app through
+the existing LaunchServices driver. Both use the unchanged production JAR and
+test classes, the same 128 MiB heap/two-processor limits and full audit thresholds.
+Both use the external controller for real input and screenshots, with the audio
+readiness and exact-PID nonmodal-window guard before input. Neither uses JFR,
+extra rendering flags, resource-policy changes or production pacing changes.
+The raw route retains the source runtime while the app retains its shipped
+runtime; this measures the two actual launch contexts rather than attributing
+any difference to a single runtime or operating-system mechanism.
+
+Results are separated under `build/performance-launcher-comparison/raw-jvm/`
+and `native-app/`, with an aggregate `comparison.json`. Failed raw measurements
+remain failed even if the native app passes. The next launch is prevented if
+owned-process, input/capture or new-window cleanup cannot be established.
+Run `43710832465` completed both routes on the same ARM64 runner at production
+JAR `0d3d50e7…3b89`. Both completed all 22 windows and the full 180-second soak,
+with the same test classes, 128 MiB heap, two visible processors and 1024×648
+content. The direct JVM route failed every active frame-rate window; the native
+app passed all 22. The aggregate result correctly remains failed.
+
+| Route | Soak frames/s | Mean paint | Process CPU, one core | Sampled peak RSS |
+| --- | --- | --- | --- | --- |
+| Direct private-JDK JVM | 17.903 | 5.240 ms | 24.792% | 267,888 KiB |
+| Native app through LaunchServices | 51.662 | 6.388 ms | 54.733% | 275,664 KiB |
+
+Both routes kept simulation time aligned with wall time, had no retained heap
+growth, and held title/pause completely still. All 56 audit frames plus three
+startup/cleanup captures were independently inspected; the native startup capture
+catches a canvas before its first paint, followed by complete title frames.
+Both processes remained active and frontmost in live observations. The raw JVM
+had nice priority −10 and the app zero, with process policy zero for both. These
+observations establish a launch-context performance difference, not App Nap as
+its specific cause. No production timer change follows from this comparison.
+
+Evidence and exact PNG/metric journals are under
+`build/ci-launcher-comparison-arm-0d3d50e7/performance-launcher-comparison/`.
+This result confirms that the direct-Java source launch route needs correction;
+it is not verification of the subsequently restored audio initialization order.
+
+## Final Linux artifact review before the footer correction
+
+Run `43708730152` passed all 22 windows and the full 180-second soak on both Linux
+architectures at production JAR `d5499672…30af`. All 28 screenshots per platform
+were independently inspected, and both static-menu image pairs are identical.
+
+| Runner | Soak frames/s | Mean paint | Process CPU, one core | Retained heap before / after |
+| --- | --- | --- | --- | --- |
+| Linux x86-64 | 62.107 | 1.692 ms | 10.299% | 20,591,032 / 20,436,616 bytes |
+| Linux ARM64 | 62.178 | 1.745 ms | 10.732% | 20,102,984 / 20,083,656 bytes |
+
+The slowest active windows were 61.938 and 61.978 frames/s; the highest mean
+paint costs were 2.287 and 2.037 ms, respectively. Both ran with Java 25.0.5,
+128 MiB maximum heap, two visible processors and 1152×648 content. Physical
+movement, braking away from the world edge, jump, retry and pause recovered
+correctly. These CI hosts had no audio output line, so their CPU measurements
+exclude active audio playback. They also did not record process RSS; the heap
+cap is not a complete process-memory measurement.
+
+Evidence and independent frame/metric manifests are in
+`build/ci-final-linux-x64/build/performance/independent-review/` and
+`build/ci-final-linux-arm64/build/performance/independent-review/`. The known
+unavailable-audio footer inconsistency is visible in this older build; these
+passes are not relabeled as verification of its subsequent footer correction.
