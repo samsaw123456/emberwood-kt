@@ -34,6 +34,7 @@ class Controller:
         auxiliary_guard=None,
         auxiliary_timeout=2.0,
         capture_trace=False,
+        capture_image_interval=None,
     ):
         self.output, self.executable = output.resolve(), executable.resolve()
         self.guard, self.windows, self.keys_factory = (
@@ -58,6 +59,13 @@ class Controller:
         self.capture_process = None
         self.capture_log = None
         self.capture_trace = capture_trace
+        if capture_image_interval is not None and (
+            not capture_trace or not 0.1 <= capture_image_interval <= 0.5
+        ):
+            raise ValueError(
+                "Image interval requires a trace and must be 0.1–0.5 seconds"
+            )
+        self.capture_image_interval = capture_image_interval
         self.capture_helper = self.output / "mac-window-capture"
         with (self.output / "capture-helper-compile.log").open("w") as log:
             subprocess.run(
@@ -181,6 +189,10 @@ class Controller:
             command = [self.capture_helper, str(pid)]
             if self.capture_trace:
                 command.extend(["--trace-dir", str(self.output / "capture-trace")])
+                if self.capture_image_interval is not None:
+                    command.extend(
+                        ["--trace-image-interval", str(self.capture_image_interval)]
+                    )
             self.capture_process = subprocess.Popen(
                 command,
                 stdin=subprocess.PIPE,

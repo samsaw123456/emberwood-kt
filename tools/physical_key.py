@@ -110,7 +110,8 @@ class NativeKeys:
                     + "\n"
                 )
 
-    def send_mac(self, events):
+    def post_mac(self, events):
+        """Post without waiting; direct callers must track and release their downs."""
         core = self.core
         shift_masks = {"left-shift": 0x2, "right-shift": 0x4}
         initial_flags = core.CGEventSourceFlagsState(0)
@@ -151,6 +152,19 @@ class NativeKeys:
                 core.CGEventPost(0, event)
             finally:
                 core.CFRelease(event)
+        return {
+            "initial_flags": initial_flags,
+            "posted_flags": posted_flags,
+            "desired_shifts": shifts,
+        }
+
+    def send_mac(self, events):
+        posted = self.post_mac(events)
+        core = self.core
+        shift_masks = {"left-shift": 0x2, "right-shift": 0x4}
+        initial_flags = posted["initial_flags"]
+        posted_flags = posted["posted_flags"]
+        shifts = posted["desired_shifts"]
         desired = {key: action == "down" for key, action in events}
         deadline = time.monotonic() + 1
         while True:

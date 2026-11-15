@@ -57,6 +57,20 @@ class BufferingComparisonTests(unittest.TestCase):
             self.assertIn("java-options=-Daudit.paintTrace=true\n", configured)
             self.assertIn("java-options=-Xmx256m\n", configured)
             self.assertNotIn("sun.java2d.", configured)
+            config.write_bytes(before)
+            configure_app(
+                app,
+                classes,
+                root / "output",
+                30,
+                None,
+                "controls-capture",
+                rendering_variant="scheduled-repaint",
+            )
+            configured = config.read_text()
+            self.assertIn("java-options=-Daudit.scheduledRepaint=true\n", configured)
+            self.assertNotIn("audit.disableDoubleBuffering", configured)
+            self.assertNotIn("sun.java2d.", configured)
 
     def fixture_run(
         self,

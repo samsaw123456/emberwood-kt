@@ -34,13 +34,14 @@ private class NativeAudit(
     private val rows = mutableListOf<String>()
     private val evidence = mutableListOf<String>()
     private val pendingImages = mutableListOf<Pair<String, BufferedImage>>()
-    private val rejectedImages = linkedMapOf<String, BufferedImage>()
+    private val rejectedCaptures = RejectedCaptures()
     private val presentationTimings = mutableListOf<String>()
     private val presentationStages = mutableListOf<String>()
     private val jumpObservations = mutableListOf<String>()
     private var presentationNonce = 65535
     private val paintTraceEnabled = java.lang.Boolean.getBoolean("audit.paintTrace")
     private val disableDoubleBuffering = java.lang.Boolean.getBoolean("audit.disableDoubleBuffering")
+    private val scheduledRepaint = java.lang.Boolean.getBoolean("audit.scheduledRepaint")
     private var doubleBufferingBeforeWindow = true
     private val paintTrace = mutableListOf<String>()
     private var paintTraceStarted: Long? = null
@@ -250,6 +251,7 @@ private class NativeAudit(
                 val transform = DoubleArray(6).also { configuration.defaultTransform.getMatrix(it) }
                 val manager = RepaintManager.currentManager(panel)
                 val maximum = manager.doubleBufferMaximumSize
+                val paintStrategy = if (scheduledRepaint) "scheduled-repaint" else "paint-immediately"
                 val properties =
                     listOf(
                         "sun.java2d.metal",
@@ -277,6 +279,8 @@ private class NativeAudit(
                     "\"panel_double_buffered\":${panel.isDoubleBuffered}," +
                     "\"repaint_manager_class\":${NativeAuditTools.quote(manager.javaClass.name)}," +
                     "\"requested_double_buffering_disabled\":$disableDoubleBuffering," +
+                    "\"requested_scheduled_repaint\":$scheduledRepaint," +
+                    "\"snapshot_paint_strategy\":${NativeAuditTools.quote(paintStrategy)}," +
                     "\"manager_double_buffering_before_window\":$doubleBufferingBeforeWindow," +
                     "\"manager_double_buffering_enabled\":${manager.isDoubleBufferingEnabled}," +
                     "\"maximum_buffer_size\":[${maximum.width},${maximum.height}]," +
@@ -398,11 +402,16 @@ private class NativeAudit(
 
     private fun snap(
         label: String,
-        observe: () -> Unit = {},
+        observe: (() -> Unit)? = null,
     ): BufferedImage {
+        check(!scheduledRepaint || observe == null) {
+            "Scheduled repaint is limited to diagnostic snapshots without synchronous state observations"
+        }
         // waitForIdle repeatedly waits for this continuously animated window and extends held input.
         val started = System.nanoTime()
-        val nonce = sequence
+        val captureAttempt = rejectedCaptures.begin(sequence)
+        val nonce = captureAttempt.nonce
+        val invocation = captureAttempt.invocation
 
         fun stage(
             name: String,
@@ -411,16 +420,21 @@ private class NativeAudit(
         ) {
             presentationStages.add(
                 "{\"case\":${NativeAuditTools.quote(currentCase)},\"frame\":${NativeAuditTools.quote(label)}," +
-                    "\"nonce\":$nonce,\"stage\":${NativeAuditTools.quote(name)},\"startedNanos\":$began," +
+                    "\"nonce\":$nonce,\"invocation\":$invocation,\"stage\":${NativeAuditTools.quote(name)}," +
+                    "\"startedNanos\":$began," +
                     "\"milliseconds\":${(System.nanoTime() - began) / 1e6}$extra}",
             )
         }
         edt {
-            observe()
+            observe?.invoke()
             presentationNonce = nonce
-            panel.paintImmediately(0, 0, panel.width, panel.height)
+            if (scheduledRepaint) {
+                panel.repaint()
+            } else {
+                panel.paintImmediately(0, 0, panel.width, panel.height)
+            }
         }
-        stage("edt-paint", started)
+        stage(if (scheduledRepaint) "edt-repaint-request" else "edt-paint", started)
         val syncStarted = System.nanoTime()
         if (!NativeAuditTools.hasExternalController) {
             java.awt.Toolkit
@@ -454,10 +468,7 @@ private class NativeAudit(
                 if (matched) {
                     null
                 } else {
-                    val prefix = "rejected-%04d".format(sequence)
-                    rejectedImages.putIfAbsent("$prefix-first.png", image)
-                    rejectedImages["$prefix-latest.png"] = image
-                    "$prefix-latest.png"
+                    rejectedCaptures.retain(captureAttempt, image)
                 }
             stage(
                 "capture-read",
@@ -505,8 +516,7 @@ private class NativeAudit(
     private fun flushImages() {
         for ((name, image) in pendingImages) check(ImageIO.write(image, "png", output.resolve(name).toFile()))
         pendingImages.clear()
-        for ((name, image) in rejectedImages) check(ImageIO.write(image, "png", output.resolve(name).toFile()))
-        rejectedImages.clear()
+        rejectedCaptures.flush(output)
     }
 
     private fun delivered(

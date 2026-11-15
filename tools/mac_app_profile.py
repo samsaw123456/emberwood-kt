@@ -50,9 +50,11 @@ def configure_app(
 ):
     if audio_trace and audit != "audio":
         raise ValueError("Audio tracing is only available for the audio audit")
-    if rendering_variant not in ("default", "no-double-buffer") or (
-        rendering_variant != "default" and audit != "controls-capture"
-    ):
+    if rendering_variant not in (
+        "default",
+        "no-double-buffer",
+        "scheduled-repaint",
+    ) or (rendering_variant != "default" and audit != "controls-capture"):
         raise ValueError("Rendering variants require the focused capture diagnostic")
     configs = list((app / "Contents/app").glob("*.cfg"))
     if len(configs) != 1:
@@ -85,6 +87,8 @@ def configure_app(
             options.append("-Xlog:gc,safepoint:stderr:time,uptime,level,tags")
             if rendering_variant == "no-double-buffer":
                 options.append("-Daudit.disableDoubleBuffering=true")
+            elif rendering_variant == "scheduled-repaint":
+                options.append("-Daudit.scheduledRepaint=true")
     elif audit == "audio":
         main_class = "emberwood.AudioStateFixture"
         options.append("-Xlog:gc,safepoint:stderr:time,uptime,level,tags")
@@ -640,6 +644,14 @@ def validate_graphics_metadata(output, rendering_variant):
         or type(metadata.get("manager_double_buffering_before_window")) is not bool
         or metadata.get("requested_double_buffering_disabled")
         is not (rendering_variant == "no-double-buffer")
+        or metadata.get("requested_scheduled_repaint")
+        is not (rendering_variant == "scheduled-repaint")
+        or metadata.get("snapshot_paint_strategy")
+        != (
+            "scheduled-repaint"
+            if rendering_variant == "scheduled-repaint"
+            else "paint-immediately"
+        )
         or (
             rendering_variant == "no-double-buffer"
             and (
@@ -651,7 +663,54 @@ def validate_graphics_metadata(output, rendering_variant):
         raise RuntimeError(
             "Actual graphics/buffering metadata does not confirm the requested diagnostic"
         )
-    return {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(), **metadata}
+    stages_path = output / "presentation-stages.jsonl"
+    stages = [json.loads(line) for line in stages_path.read_text().splitlines()]
+    expected_stage = (
+        "edt-repaint-request"
+        if rendering_variant == "scheduled-repaint"
+        else "edt-paint"
+    )
+    paint_rows = [
+        row
+        for row in stages
+        if isinstance(row, dict)
+        and row.get("stage") in ("edt-paint", "edt-repaint-request")
+    ]
+    capture_rows = [
+        row
+        for row in stages
+        if isinstance(row, dict) and row.get("stage") == "capture-read"
+    ]
+    painted = {
+        (row.get("case"), row.get("frame"), row.get("nonce"), row.get("invocation"))
+        for row in paint_rows
+    }
+    if (
+        not paint_rows
+        or not capture_rows
+        or any(
+            type(row.get("invocation")) is not int or row["invocation"] < 0
+            for row in [*paint_rows, *capture_rows]
+        )
+        or len({row["invocation"] for row in paint_rows}) != len(paint_rows)
+        or any(row.get("stage") != expected_stage for row in paint_rows)
+        or any(
+            (row.get("case"), row.get("frame"), row.get("nonce"), row.get("invocation"))
+            not in painted
+            for row in capture_rows
+        )
+    ):
+        raise RuntimeError(
+            "Executed snapshot stages do not confirm the requested paint strategy"
+        )
+    return {
+        **metadata,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "presentation_stages_sha256": hashlib.sha256(
+            stages_path.read_bytes()
+        ).hexdigest(),
+        "executed_snapshot_stage": expected_stage,
+    }
 
 
 def cleanup_capture_windows(controller, executable, baseline, output):
@@ -692,9 +751,9 @@ def main():
     )
     parser.add_argument(
         "--rendering-variant",
-        choices=("default", "no-double-buffer"),
+        choices=("default", "no-double-buffer", "scheduled-repaint"),
         default="default",
-        help="Test-only buffering comparison for --audit controls-capture",
+        help="Test-only presentation comparison for --audit controls-capture",
     )
     args = parser.parse_args()
     if args.audio_trace and args.audit != "audio":

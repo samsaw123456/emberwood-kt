@@ -64,6 +64,7 @@ class NativeStreamDiagnosticTests(unittest.TestCase):
         self.assertEqual(summary["skipped_images"], 0)
         self.assertFalse(summary["captures_audio"])
         self.assertFalse(summary["captures_microphone"])
+        self.assertEqual(summary["image_interval_seconds"], 0.5)
         records = [
             json.loads(line)
             for line in (output / "frames.jsonl").read_text().splitlines()
@@ -82,6 +83,10 @@ class NativeStreamDiagnosticTests(unittest.TestCase):
         png = (output / "stream-0000.png").read_bytes()
         self.assertEqual(png[:8], b"\x89PNG\r\n\x1a\n")
         self.assertEqual(struct.unpack(">II", png[16:24]), (128, 128))
+        fast = json.loads((output / "fast/summary.json").read_text())
+        self.assertEqual(fast["image_interval_seconds"], 0.1)
+        self.assertEqual(fast["image_count"], 2)
+        self.assertEqual(fast["skipped_images"], 0)
         stale = subprocess.run(
             [self.helper, "--test-stream-diagnostic", output],
             capture_output=True,

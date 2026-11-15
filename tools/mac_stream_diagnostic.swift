@@ -47,6 +47,7 @@ func streamNonce(bytes: UnsafeRawPointer, width: Int, height: Int, rowBytes: Int
 final class StreamDiagnostic: NSObject, SCStreamOutput, SCStreamDelegate {
     private let directory: URL
     private let pid: Int32
+    private let imageInterval: Double
     private let callbackQueue = DispatchQueue(label: "emberwood.stream-evidence.callbacks")
     private let imageQueue = DispatchQueue(label: "emberwood.stream-evidence.images", qos: .utility)
     private let imageSlots = DispatchSemaphore(value: 2)
@@ -68,9 +69,13 @@ final class StreamDiagnostic: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stopped = false
     private var geometryChange: [String: Any]?
 
-    init(directory: URL, pid: Int32) throws {
+    init(directory: URL, pid: Int32, imageInterval: Double = 0.5) throws {
+        guard imageInterval.isFinite, (0.1...0.5).contains(imageInterval) else {
+            throw CaptureError.unavailable("Stream image interval must be between 0.1 and 0.5 seconds")
+        }
         self.directory = directory
         self.pid = pid
+        self.imageInterval = imageInterval
         super.init()
         let manager = FileManager.default
         if manager.fileExists(atPath: directory.path) {
@@ -185,7 +190,7 @@ final class StreamDiagnostic: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         record["nonce"] = NSNull()
         if let nonce { record["nonce"] = nonce }
-        guard nonce != previousImageNonce || host - previousImageHost >= 0.5 else { return }
+        guard nonce != previousImageNonce || host - previousImageHost >= imageInterval else { return }
         guard imageCount < StreamEvidenceLimits.images, imageSlots.wait(timeout: .now()) == .success else {
             skippedImages += 1
             return
@@ -258,7 +263,8 @@ final class StreamDiagnostic: NSObject, SCStreamOutput, SCStreamDelegate {
                            "images": StreamEvidenceLimits.images, "pending_images": 2] as [String: Any],
                 "window_rectangle": [windowRectangle.minX, windowRectangle.minY, windowRectangle.width, windowRectangle.height],
                 "snapshot_comparator_unchanged": true, "captures_audio": false, "captures_microphone": false,
-                "scope": "initial-fixed-window-geometry", "geometry_change": NSNull()]
+                "scope": "initial-fixed-window-geometry", "geometry_change": NSNull(),
+                "image_interval_seconds": imageInterval]
             summary["mach_timebase"] = ["numerator": timebase.numer, "denominator": timebase.denom]
             if let windowID { summary["window"] = windowID }
             if let geometryChange { summary["geometry_change"] = geometryChange }
@@ -277,6 +283,14 @@ final class StreamDiagnostic: NSObject, SCStreamOutput, SCStreamDelegate {
         try require(StreamEvidenceLimits.permits(elapsed: 89.99, count: 5999), "early bound")
         try require(!StreamEvidenceLimits.permits(elapsed: 90, count: 0), "time bound")
         try require(!StreamEvidenceLimits.permits(elapsed: 0, count: 6000), "record bound")
+        for interval in [Double.nan, 0.0, 0.09, 0.51, Double.infinity] {
+            do {
+                _ = try StreamDiagnostic(directory: directory, pid: 12345, imageInterval: interval)
+                throw CaptureError.unavailable("Stream fixture: accepted invalid image interval")
+            } catch CaptureError.unavailable(let message) {
+                try require(message == "Stream image interval must be between 0.1 and 0.5 seconds", "interval rejection")
+            }
+        }
         let recorder = try StreamDiagnostic(directory: directory, pid: 12345)
         recorder.windowID = 37
         recorder.windowRectangle = CGRect(x: 100, y: 200, width: 64, height: 64)
@@ -345,6 +359,18 @@ final class StreamDiagnostic: NSObject, SCStreamOutput, SCStreamDelegate {
         let rgba = decoded.assumingMemoryBound(to: UInt8.self)
         let whitePixels = (0..<(128 * 128)).filter { rgba[$0 * 4] == 255 && rgba[$0 * 4 + 1] == 255 && rgba[$0 * 4 + 2] == 255 }.count
         try require(whitePixels == (nonce.nonzeroBitCount + 2) * 36, "retained PNG owns pixels after IOSurface mutation")
+        let fast = try StreamDiagnostic(directory: directory.appendingPathComponent("fast"), pid: 12345, imageInterval: 0.1)
+        fast.windowID = 37
+        fast.windowRectangle = recorder.windowRectangle
+        fast.startedHost = hostSeconds()
+        CFDictionarySetValue(attachments, Unmanaged.passUnretained(key).toOpaque(), Unmanaged.passUnretained(complete).toOpaque())
+        fast.callbackQueue.sync {
+            fast.receive(sample)
+            fast.previousImageHost -= 0.101
+            fast.receive(sample)
+        }
+        try await fast.finish()
+        try require(fast.imageCount == 2, "explicit100ms cadence retains both copied frames")
         do {
             _ = try StreamDiagnostic(directory: directory, pid: 12345)
             throw CaptureError.unavailable("Stream fixture: accepted stale output")

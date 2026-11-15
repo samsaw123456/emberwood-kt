@@ -212,7 +212,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(len(self.captures), 1)
         self.assertFalse((self.output / "bad.png").exists())
 
-    def exercise_capture_process(self, trace):
+    def exercise_capture_process(self, trace, interval=None):
         helper = self.output / "capture-fixture"
         helper.write_text(
             f"#!{sys.executable}\n"
@@ -232,6 +232,7 @@ class BridgeTests(unittest.TestCase):
         helper.chmod(0o755)
         self.controller.capture_helper = helper
         self.controller.capture_trace = trace
+        self.controller.capture_image_interval = interval
         self.controller.capture_image = Controller.capture_image.__get__(
             self.controller, Controller
         )
@@ -255,6 +256,8 @@ class BridgeTests(unittest.TestCase):
                 "--trace-dir",
                 str((self.output / "capture-trace").resolve()),
             ]
+            if interval is not None:
+                expected += ["--trace-image-interval", str(interval)]
         self.assertEqual(arguments, expected)
         finished = json.loads((self.output / "helper-finished.json").read_text())
         self.assertEqual(len(finished), 3)
@@ -271,6 +274,28 @@ class BridgeTests(unittest.TestCase):
 
     def test_capture_trace_is_opt_in_and_preserves_same_window_snapshots(self):
         self.exercise_capture_process(True)
+
+    def test_main_movement_image_cadence_is_explicit_and_preserves_snapshots(self):
+        self.exercise_capture_process(True, 0.1)
+
+    def test_image_interval_requires_trace_and_bounded_cadence(self):
+        for trace, interval in (
+            (False, 0.1),
+            (True, 0.09),
+            (True, 0.51),
+            (True, float("nan")),
+        ):
+            with (
+                self.subTest(trace=trace, interval=interval),
+                self.assertRaises(ValueError),
+            ):
+                Controller(
+                    self.output,
+                    self.executable,
+                    windows=self.windows,
+                    capture_trace=trace,
+                    capture_image_interval=interval,
+                )
 
     def test_concurrent_clients_and_duplicate_keyboard_refusal(self):
         self.guard()

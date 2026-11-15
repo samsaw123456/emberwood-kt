@@ -82,7 +82,8 @@ struct WindowCapture {
         // NSApplication establishes the WindowServer connection required by CG/SCK.
         // This external test helper never activates or creates a window of its own.
         _ = NSApplication.shared.setActivationPolicy(.prohibited)
-        guard (arguments.count == 2 || (arguments.count == 4 && arguments[2] == "--trace-dir")),
+        guard (arguments.count == 2 || ((arguments.count == 4 || arguments.count == 6) && arguments[2] == "--trace-dir")),
+              arguments.count != 6 || arguments[4] == "--trace-image-interval",
               let pid = Int32(arguments[1]), pid > 1,
               CGPreflightScreenCaptureAccess() else {
             fputs("Capture requires the exact game PID and pre-existing permission; no consent requested\n", stderr)
@@ -90,7 +91,9 @@ struct WindowCapture {
         }
         let diagnostic: StreamDiagnostic?
         do {
-            diagnostic = arguments.count == 4 ? try StreamDiagnostic(directory: URL(fileURLWithPath: arguments[3]), pid: pid) : nil
+            let interval = arguments.count == 6 ? Double(arguments[5]) ?? Double.nan : 0.5
+            diagnostic = arguments.count >= 4 ? try StreamDiagnostic(directory: URL(fileURLWithPath: arguments[3]),
+                                                                     pid: pid, imageInterval: interval) : nil
         } catch {
             fputs("Stream setup failed: \(error)\n", stderr)
             exit(1)

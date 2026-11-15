@@ -123,6 +123,16 @@ class KeyFlagsTests(unittest.TestCase):
         )
         self.assertEqual(self.keyboard.held, set())
 
+    def test_immediate_post_does_not_wait_for_os_acknowledgment(self):
+        # The timed real-Main probe owns its release deadline. A missing down
+        # receipt must not turn that fixed hold into send_mac's one-second wait.
+        self.core.CGEventSourceKeyState = lambda _source, _code: False
+        result = self.keyboard.post_mac([("left", "down")])
+        self.assertEqual(result["posted_flags"][0]["key"], "left")
+        self.assertTrue(self.core.posts[-1]["down"])
+        self.keyboard.post_mac([("left", "up")])
+        self.assertFalse(self.core.posts[-1]["down"])
+
 
 if __name__ == "__main__":
     unittest.main()

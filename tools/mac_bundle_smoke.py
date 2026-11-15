@@ -8,6 +8,7 @@ import platform
 import plistlib
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -18,6 +19,79 @@ from mac_game_focus import NativeFocusUnavailable, require_game_window
 from mac_game_window import GameWindow
 from mac_process_state import terminal_process_state
 from mac_profile_observer import NativeStatus
+
+
+class ImmediateMacKeys:
+    """Post only requested native keys; retain attempted presses for cleanup."""
+
+    def __init__(self, core, foundation):
+        self.core, self.foundation = core, foundation
+        self.held = set()
+        core.CGEventCreateKeyboardEvent.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_ushort,
+            ctypes.c_bool,
+        ]
+        core.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
+        core.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        core.CGEventSetFlags.restype = None
+        core.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+        core.CGEventPost.restype = None
+        core.CGEventSourceFlagsState.argtypes = [ctypes.c_int]
+        core.CGEventSourceFlagsState.restype = ctypes.c_uint64
+        foundation.CFRelease.argtypes = [ctypes.c_void_p]
+        foundation.CFRelease.restype = None
+
+    def key(self, code, down, flags=0):
+        if down:
+            self.held.add(code)
+        event = self.core.CGEventCreateKeyboardEvent(None, code, down)
+        if not event:
+            raise RuntimeError("macOS did not create the physical key event")
+        try:
+            self.core.CGEventSetFlags(event, flags)
+            self.core.CGEventPost(0, event)
+            if not down:
+                self.held.discard(code)
+        finally:
+            self.foundation.CFRelease(event)
+
+    def close(self):
+        errors = []
+        for code in sorted(self.held):
+            try:
+                self.key(code, False)
+            except (OSError, RuntimeError) as error:
+                errors.append(str(error))
+        if errors:
+            raise RuntimeError("Native key cleanup failed: " + "; ".join(errors))
+
+
+def physical_command_quit(core, key):
+    """Call only after the exact game's foreground/window guard has passed."""
+    attempted = []
+    try:
+        for code in (55, 12):  # Physical Command, then Q.
+            attempted.append(code)
+            key(code, True, 1 << 20)
+        time.sleep(0.1)
+    finally:
+        active_error = sys.exc_info()[0] is not None
+        release_error = None
+        for code in reversed(attempted):
+            try:
+                key(code, False, (1 << 20) if code == 12 else 0)
+            except (OSError, RuntimeError) as error:
+                release_error = release_error or error
+        if release_error is not None and not active_error:
+            raise release_error
+    time.sleep(0.2)
+    return {
+        "phase": "after-Command-Q",
+        "command_modifier_released": not bool(
+            core.CGEventSourceFlagsState(0) & (1 << 20)
+        ),
+    }
 
 
 def launch_command(raw, app, data):
@@ -140,23 +214,12 @@ def main():
     foundation.CFRelease.restype = None
     core.CGWindowListCopyWindowInfo.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
     core.CGWindowListCopyWindowInfo.restype = ctypes.c_void_p
-    core.CGEventCreateKeyboardEvent.argtypes = [
-        ctypes.c_void_p,
-        ctypes.c_ushort,
-        ctypes.c_bool,
-    ]
-    core.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
-    core.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
-    core.CGEventSetFlags.restype = None
-    core.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
-    core.CGEventPost.restype = None
-    core.CGEventSourceFlagsState.argtypes = [ctypes.c_int]
-    core.CGEventSourceFlagsState.restype = ctypes.c_uint64
+    keyboard = ImmediateMacKeys(core, foundation)
+    key = keyboard.key
     native = NativeStatus()
     windows = GameWindow()
     baseline = windows.visible_registry()
     receipts = []
-    held = set()
     keys = {
         name: foundation.CFStringCreateWithCString(None, name.encode(), 0x08000100)
         for name in ("kCGWindowOwnerPID", "kCGWindowLayer", "kCGWindowNumber")
@@ -184,20 +247,6 @@ def main():
         finally:
             foundation.CFRelease(windows)
         return None
-
-    def key(code, down, flags=0):
-        if down:
-            held.add(code)
-        event = core.CGEventCreateKeyboardEvent(None, code, down)
-        if not event:
-            raise RuntimeError("macOS did not create the physical key event")
-        try:
-            core.CGEventSetFlags(event, flags)
-            core.CGEventPost(0, event)
-            if not down:
-                held.discard(code)
-        finally:
-            foundation.CFRelease(event)
 
     def tap(code, duration=0.08):
         key(code, True)
@@ -320,23 +369,12 @@ def main():
                 check=True,
             )
             require_foreground(pid, "before-Command-Q")
-            key(55, True, 1 << 20)  # Physical Command + Q.
-            key(12, True, 1 << 20)
-            time.sleep(0.1)
-            key(12, False, 1 << 20)
-            key(55, False)
-            time.sleep(0.2)
-            command_released = not bool(core.CGEventSourceFlagsState(0) & (1 << 20))
-            receipts.append(
-                {
-                    "phase": "after-Command-Q",
-                    "command_modifier_released": command_released,
-                }
-            )
+            quit_receipt = physical_command_quit(core, key)
+            receipts.append(quit_receipt)
             (args.output / "native-state.json").write_text(
                 json.dumps(receipts, indent=2) + "\n"
             )
-            if not command_released:
+            if not quit_receipt["command_modifier_released"]:
                 raise RuntimeError(
                     "Physical Command release was not reflected by macOS"
                 )
@@ -376,16 +414,17 @@ def main():
                     capture_initialization_stacks(pid, args.output)
         raise
     finally:
-        for code in list(held):
-            key(code, False)
         try:
-            cleanup_app(pid, executable, windows, baseline, args.output)
+            keyboard.close()
         finally:
-            if process and process.poll() is None:
-                process.terminate()
-                process.wait(timeout=5)
-            for value in keys.values():
-                foundation.CFRelease(value)
+            try:
+                cleanup_app(pid, executable, windows, baseline, args.output)
+            finally:
+                if process and process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=5)
+                for value in keys.values():
+                    foundation.CFRelease(value)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ from mac_app_profile import (
 )
 
 
-def graphics_fixture(output, disabled=False, *, enabled=None):
+def graphics_fixture(output, disabled=False, *, enabled=None, scheduled=False):
     metadata = {
         "configuration_class": "fixture.GraphicsConfiguration",
         "device_class": "fixture.GraphicsDevice",
@@ -38,9 +38,32 @@ def graphics_fixture(output, disabled=False, *, enabled=None):
         if enabled is None
         else enabled,
         "requested_double_buffering_disabled": disabled,
+        "requested_scheduled_repaint": scheduled,
+        "snapshot_paint_strategy": "scheduled-repaint"
+        if scheduled
+        else "paint-immediately",
         "maximum_buffer_size": [1920, 1080],
     }
     (output / "graphics-metadata.json").write_text(json.dumps(metadata))
+    stages = [
+        {
+            "case": "fixture",
+            "frame": "before",
+            "nonce": 1,
+            "invocation": 1,
+            "stage": "edt-repaint-request" if scheduled else "edt-paint",
+        },
+        {
+            "case": "fixture",
+            "frame": "before",
+            "nonce": 1,
+            "invocation": 1,
+            "stage": "capture-read",
+        },
+    ]
+    (output / "presentation-stages.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in stages)
+    )
     return metadata
 
 
@@ -111,6 +134,28 @@ def trace_fixture(output, pid=12345):
 
 
 class CaptureTraceTests(unittest.TestCase):
+    def test_scheduled_strategy_requires_executed_stages_and_no_buffer_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            graphics_fixture(output, scheduled=True)
+            result = validate_graphics_metadata(output, "scheduled-repaint")
+            self.assertEqual(result["executed_snapshot_stage"], "edt-repaint-request")
+            stages = output / "presentation-stages.jsonl"
+            stages.write_text(
+                stages.read_text().replace("edt-repaint-request", "edt-paint")
+            )
+            with self.assertRaises(RuntimeError):
+                validate_graphics_metadata(output, "scheduled-repaint")
+            graphics_fixture(output, scheduled=True)
+            rows = [json.loads(line) for line in stages.read_text().splitlines()]
+            rows[-1]["invocation"] = 2
+            stages.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            with self.assertRaises(RuntimeError):
+                validate_graphics_metadata(output, "scheduled-repaint")
+            graphics_fixture(output, scheduled=True, disabled=True)
+            with self.assertRaises(RuntimeError):
+                validate_graphics_metadata(output, "scheduled-repaint")
+
     def test_graphics_receipt_confirms_observed_buffering_not_only_request(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)

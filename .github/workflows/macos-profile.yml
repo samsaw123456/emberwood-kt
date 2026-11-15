@@ -24,7 +24,7 @@ on:
         type: choice
         required: true
         default: performance
-        options: [performance, controls, controls-targeted, controls-capture, controls-buffering-compare, compare-launchers, audio, audio-trace]
+        options: [performance, controls, controls-targeted, controls-capture, controls-buffering-compare, controls-scheduled, main-movement, compare-launchers, audio, audio-trace]
 permissions:
   contents: read
 jobs:
@@ -45,10 +45,17 @@ jobs:
         run: |
           java_home=$(tools/bootstrap.sh)
           printf 'JAVA_HOME=%s\n' "$java_home" >> "$GITHUB_ENV"
+      - name: Prepare rendered movement checks
+        if: inputs.audit == 'main-movement'
+        run: |
+          python3 -m pip install 'Pillow==12.1.1'
+          python3 -m unittest discover -s tools -p 'test_mac_main_movement.py' -v
       - name: Check, build and package
         run: |
           python3 -m unittest discover -s tools -p 'test_mac_bridge.py' -v
           python3 -m unittest discover -s tools -p 'test_mac_app*.py' -v
+          python3 -m unittest discover -s tools -p 'test_mac_bundle*.py' -v
+          python3 -m unittest discover -s tools -p 'test_physical_key.py' -v
           python3 -m unittest tools.test_mac_stream_diagnostic -v
           ./gradlew --no-daemon check fatJar
           python3 tools/package_app.py --skip-build
@@ -67,6 +74,10 @@ jobs:
               python3 tools/mac_app_profile.py --audit controls-capture --capture-trace ;;
             controls-buffering-compare)
               python3 tools/mac_capture_compare.py ;;
+            controls-scheduled)
+              python3 tools/mac_app_profile.py --audit controls-capture --capture-trace --rendering-variant scheduled-repaint ;;
+            main-movement)
+              python3 tools/mac_main_movement.py --output build/main-movement-native-app ;;
             compare-launchers)
               python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds "$SOAK_SECONDS" ;;
             *) exit 2 ;;
@@ -82,6 +93,7 @@ jobs:
             build/controls-targeted-native-app/
             build/controls-capture-native-app/
             build/controls-capture-comparison/
+            build/main-movement-native-app/
             build/performance-launcher-comparison/
             build/audio-native-app/
             build/reports/tests/
