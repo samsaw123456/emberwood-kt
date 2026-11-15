@@ -20,36 +20,40 @@ jobs:
           python-version: '3.12'
       - name: Prepare Linux display and packaging checks
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth desktop-file-utils libasound2t64
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth openbox x11-utils desktop-file-utils libasound2t64
       - name: Prepare pinned private Java 25
         shell: bash
         run: |
           java_home=$(tools/bootstrap.sh)
           printf 'JAVA_HOME=%s\n' "$java_home" >> "$GITHUB_ENV"
       - name: Check and build
+        id: build
         run: ./gradlew --no-daemon check fatJar
       - name: Audit controls through a real window on Linux
         if: runner.os == 'Linux'
-        run: EMBERWOOD_X11_PYTHON=/usr/bin/python3 xvfb-run -a -s '-screen 0 1280x800x24' ./gradlew --no-daemon nativeAudit
+        run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh ./gradlew --no-daemon nativeAudit
       - name: Audit controls through a real window on macOS
         if: runner.os == 'macOS'
         run: ./gradlew --no-daemon nativeAudit
       - name: Validate installer on Linux
-        if: runner.os == 'Linux'
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.build.outcome == 'success' }}
         run: python3 -m unittest discover -s tools -p 'test_install.py' -v
       - name: Package the native runtime
+        id: package
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: python3 tools/package_app.py --skip-build
       - name: Verify actual installation and bundled launch
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         shell: bash
         run: |
           for package in dist/emberwood-kotlin-*/; do
             python3 tools/test_package.py "$package"
           done
       - name: Audit the packaged runtime on Linux
-        if: runner.os == 'Linux'
-        run: EMBERWOOD_X11_PYTHON=/usr/bin/python3 xvfb-run -a -s '-screen 0 1280x800x24' python3 tools/audit_package.py
+        if: ${{ !cancelled() && runner.os == 'Linux' && steps.package.outcome == 'success' }}
+        run: xvfb-run -a -s '-screen 0 1280x800x24' tools/run_x11_audit.sh python3 tools/audit_package.py
       - name: Audit the packaged runtime on macOS
-        if: runner.os == 'macOS'
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.package.outcome == 'success' }}
         run: python3 tools/audit_package.py
       - name: Retain verification and application artifacts
         if: always()

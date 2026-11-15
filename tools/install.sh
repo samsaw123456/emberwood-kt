@@ -71,7 +71,7 @@ Exec=/bin/sh "$executable"
 Icon=emberwood-kotlin
 Terminal=false
 Categories=Game;AdventureGame;
-StartupWMClass=Emberwood Kotlin
+StartupWMClass=emberwood-MainKt
 DESKTOP
     if command -v update-desktop-database >/dev/null; then update-desktop-database "$(dirname -- "$desktop")"; fi
 else

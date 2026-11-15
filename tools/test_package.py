@@ -54,12 +54,22 @@ def main():
         else:
             desktop = home / "data/applications/org.emberwood.kotlin.desktop"
             subprocess.run(["desktop-file-validate", desktop], check=True)
+        settings = (
+            home / "Library/Application Support/Emberwood Kotlin/settings.properties"
+            if mac
+            else home / "data/emberwood-kotlin/settings.properties"
+        )
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        saved_preferences = "muted=true\ngentle=true\nbest=123.5\n"
+        settings.write_text(saved_preferences)
         (app / "obsolete.txt").write_text("previous package")
         subprocess.run([installer], env=env, check=True, timeout=60)
         assert not (app / "obsolete.txt").exists()
+        assert settings.read_text() == saved_preferences
         subprocess.run([launcher, "--version"], env=env, check=True, timeout=60)
         subprocess.run([installer, "--uninstall"], env=env, check=True, timeout=60)
         assert not app.exists()
+        assert settings.read_text() == saved_preferences
         print(
             "PASS: native package install, bundled Java25, version, launcher metadata, replacement and removal"
         )

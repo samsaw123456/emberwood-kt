@@ -51,6 +51,7 @@ private class NativeAudit(
             menuNavigation()
             menuActivation()
             gearAndSettings()
+            gentleMotionPresentation()
             pauseAndRetry()
             disabledCases()
             mouseCases()
@@ -149,9 +150,11 @@ private class NativeAudit(
     }
 
     private fun snap(label: String): BufferedImage {
-        edt { panel.repaint() }
-        robot.waitForIdle()
-        robot.delay(30)
+        // waitForIdle repeatedly waits for this continuously animated window and extends held input.
+        edt { panel.paintImmediately(0, 0, panel.width, panel.height) }
+        java.awt.Toolkit
+            .getDefaultToolkit()
+            .sync()
         val bounds =
             edt {
                 val p = panel.locationOnScreen
@@ -197,16 +200,23 @@ private class NativeAudit(
         if (nativeKeys.isNotEmpty()) physical(*nativeKeys.map { it to false }.toTypedArray())
     }
 
-    private fun activate(key: String) {
+    private fun activate(
+        key: String,
+        hold: Boolean = false,
+    ) {
         when (key) {
-            "Return" -> tap(KeyEvent.VK_ENTER)
-            "Space" -> tap(KeyEvent.VK_SPACE)
-            else -> {
-                physical("keypad-enter" to true)
-                physical("keypad-enter" to false)
-                robot.delay(45)
-            }
+            "Return" -> down(KeyEvent.VK_ENTER)
+            "Space" -> down(KeyEvent.VK_SPACE)
+            else -> physical("keypad-enter" to true)
         }
+        robot.delay(if (hold) 850 else 25)
+        if (hold) snap("activation-held")
+        when (key) {
+            "Return" -> up(KeyEvent.VK_ENTER)
+            "Space" -> up(KeyEvent.VK_SPACE)
+            else -> physical("keypad-enter" to false)
+        }
+        robot.delay(45)
     }
 
     private fun click(
@@ -325,6 +335,29 @@ private class NativeAudit(
                 up(right)
             }
         }
+        for ((first, second, sign) in listOf(
+            Triple(KeyEvent.VK_A, KeyEvent.VK_LEFT, -1),
+            Triple(KeyEvent.VK_D, KeyEvent.VK_RIGHT, 1),
+        )) {
+            case(
+                "${KeyEvent.getKeyText(first)} + ${KeyEvent.getKeyText(second)} release",
+                GameState.PLAYING,
+                "Releasing one alternate movement key keeps moving until the remaining key is released",
+            ) {
+                down(first)
+                down(second)
+                robot.delay(120)
+                val held = foxCenter(snap("alternate-directions-held")).first
+                up(first)
+                robot.delay(120)
+                val remaining = foxCenter(snap("alternate-one-released")).first
+                check((remaining - held) * sign > 15)
+                up(second)
+                robot.delay(180)
+                snap("alternate-both-released")
+                check(edt { abs(panel.game.player.vx) < .01 })
+            }
+        }
     }
 
     private fun jumpCases() {
@@ -365,6 +398,46 @@ private class NativeAudit(
             tap(KeyEvent.VK_SPACE)
             snap("jump-alternate-repress")
             check(edt { panel.game.player.jumpsLeft == 0 })
+        }
+    }
+
+    private fun gentleMotionPresentation() {
+        case(
+            "Gentle motion / visible bat wings",
+            GameState.PLAYING,
+            "The menu toggle freezes decorative wing motion after resume; turning it off restores visible animation",
+        ) {
+            // Hold the original species' patrol still to isolate decorative motion from its collision path.
+            edt {
+                panel.game.level.critters
+                    .add(Critter(CritterDef("bat", Vec(430.0, 350.0), 0.0, 0.0)))
+            }
+
+            fun wingMask(label: String): BooleanArray {
+                val image = snap(label)
+                return BooleanArray(100 * 100) { i ->
+                    (image.getRGB(380 + i % 100, 240 + i / 100) and 0xffffff) == 0xa58ed4
+                }
+            }
+            val movingBefore = wingMask("wings-moving-before")
+            robot.delay(130)
+            val movingAfter = wingMask("wings-moving-after")
+            check(movingBefore.any { it } && !movingBefore.contentEquals(movingAfter))
+            tap(KeyEvent.VK_ESCAPE)
+            click("motion")
+            snap("gentle-selected")
+            tap(KeyEvent.VK_ESCAPE)
+            val stillBefore = wingMask("wings-gentle-before")
+            robot.delay(180)
+            val stillAfter = wingMask("wings-gentle-after")
+            check(stillBefore.any { it } && stillBefore.contentEquals(stillAfter))
+            tap(KeyEvent.VK_ESCAPE)
+            click("motion")
+            tap(KeyEvent.VK_ESCAPE)
+            val restoredBefore = wingMask("wings-restored-before")
+            robot.delay(130)
+            val restoredAfter = wingMask("wings-restored-after")
+            check(!restoredBefore.contentEquals(restoredAfter))
         }
     }
 
@@ -595,7 +668,7 @@ private class NativeAudit(
         for (state in menus) {
             for (key in activationKeys) {
                 case(key, state, "Activate the focused Start/Resume/Continue/Replay action, without an accidental gameplay jump", true) {
-                    activate(key)
+                    activate(key, hold = true)
                     snap("menu-activated")
                     check(edt { panel.game.state == GameState.PLAYING && panel.game.player.jumpsLeft == 2 })
                 }
@@ -605,7 +678,7 @@ private class NativeAudit(
             case("$key / Restart all", GameState.PAUSED, "Restart returns to level one and clears equipment/progress", true) {
                 focus("restart")
                 snap("restart-focused")
-                activate(key)
+                activate(key, hold = true)
                 check(
                     edt {
                         panel.game.state == GameState.PLAYING &&
@@ -641,7 +714,7 @@ private class NativeAudit(
                     focus(item.id)
                     snap("gear-focused")
                     val selected = edt { panel.game.equipment.isEquipped(item.id) }
-                    activate(key)
+                    activate(key, hold = true)
                     snap("gear-toggled")
                     check(edt { panel.game.equipment.isEquipped(item.id) != selected })
                     activate(key)
@@ -656,7 +729,7 @@ private class NativeAudit(
                         focus(id)
                         snap("setting-focused")
                         val previous = edt { if (id == "sound") panel.settings.muted else panel.settings.gentle }
-                        activate(key)
+                        activate(key, hold = true)
                         snap("setting-toggled")
                         check(edt { (if (id == "sound") panel.settings.muted else panel.settings.gentle) != previous })
                         activate(key)
@@ -673,11 +746,11 @@ private class NativeAudit(
                 true,
             ) {
                 focus("armor-down")
-                repeat(3) { activate(key) }
+                repeat(3) { activate(key, hold = it == 0) }
                 snap("armor-last-page")
                 check(edt { panel.actions.any { it.id == "sunleaf_armor" } })
                 focus("armor-up")
-                repeat(3) { activate(key) }
+                repeat(3) { activate(key, hold = it == 0) }
                 snap("armor-first-page")
                 check(edt { panel.actions.any { it.id == "armor" } })
             }
@@ -850,7 +923,7 @@ private class NativeAudit(
             case("Mouse left / ${item.name}", GameState.PAUSED, "Click toggles the correct visible gear, then toggles it back", true) {
                 reveal(item.id)
                 val selected = edt { panel.game.equipment.isEquipped(item.id) }
-                click(item.id)
+                click(item.id, hold = true)
                 snap("mouse-gear-toggle")
                 check(edt { panel.game.equipment.isEquipped(item.id) != selected })
                 click(item.id)
@@ -861,7 +934,7 @@ private class NativeAudit(
             for (id in listOf("sound", "motion")) {
                 case("Mouse left / $id", state, "Click changes the displayed setting and a second click restores it") {
                     val before = edt { if (id == "sound") panel.settings.muted else panel.settings.gentle }
-                    click(id)
+                    click(id, hold = true)
                     snap("mouse-setting-toggle")
                     check(edt { (if (id == "sound") panel.settings.muted else panel.settings.gentle) != before })
                     click(id)

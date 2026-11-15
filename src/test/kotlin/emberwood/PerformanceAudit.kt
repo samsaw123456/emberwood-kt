@@ -2,6 +2,7 @@ package emberwood
 
 import com.sun.management.OperatingSystemMXBean
 import java.awt.Robot
+import java.awt.Toolkit
 import java.awt.event.KeyEvent
 import java.lang.management.ManagementFactory
 import java.nio.file.Files
@@ -297,9 +298,8 @@ object PerformanceAudit {
         }
 
         private fun screenshot(name: String) {
-            edt { panel.repaint() }
-            robot.waitForIdle()
-            robot.delay(30)
+            edt { panel.paintImmediately(0, 0, panel.width, panel.height) }
+            Toolkit.getDefaultToolkit().sync()
             val rectangle =
                 edt {
                     val location = panel.locationOnScreen

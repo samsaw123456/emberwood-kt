@@ -24,6 +24,14 @@ def nodes():
 
 def ports(pid=None, name=None, direction="out"):
     objects = nodes()
+    clients = {
+        item["id"]
+        for item in objects
+        if item["type"] == "PipeWire:Interface:Client"
+        and pid is not None
+        and str(item.get("info", {}).get("props", {}).get("application.process.id"))
+        == str(pid)
+    }
     wanted = {
         item["id"]
         for item in objects
@@ -31,10 +39,15 @@ def ports(pid=None, name=None, direction="out"):
         and (
             (
                 pid is not None
-                and str(
-                    item.get("info", {}).get("props", {}).get("application.process.id")
+                and (
+                    str(
+                        item.get("info", {})
+                        .get("props", {})
+                        .get("application.process.id")
+                    )
+                    == str(pid)
+                    or item.get("info", {}).get("props", {}).get("client.id") in clients
                 )
-                == str(pid)
             )
             or (
                 name is not None

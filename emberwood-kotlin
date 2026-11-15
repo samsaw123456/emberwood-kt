@@ -23,7 +23,7 @@ export JAVA_HOME="$java_home"
 jar=build/libs/emberwood-kotlin.jar
 needs_build=false
 [[ -f "$jar" ]] || needs_build=true
-if [[ -f "$jar" ]] && [[ -n $(find src build.gradle.kts settings.gradle.kts gradle.properties VERSION -newer "$jar" -print -quit) ]]; then needs_build=true; fi
+if [[ -f "$jar" ]] && [[ -n $(find src/main build.gradle.kts settings.gradle.kts gradle.properties VERSION -newer "$jar" -print -quit) ]]; then needs_build=true; fi
 if $build_only || $needs_build; then
     if $offline; then printf '%s\n' 'No current game build is available. Run ./emberwood-kotlin --build online first.' >&2; exit 2; fi
     printf '%s\n' 'Building Emberwood Kotlin. Later launches run directly and work offline.' >&2

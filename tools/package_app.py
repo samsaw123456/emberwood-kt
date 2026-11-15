@@ -55,7 +55,7 @@ def build_deb(app, version, arch, dist):
             "[Desktop Entry]\nType=Application\nName=Emberwood Kotlin\n"
             "Comment=Explore twenty forest levels. Play offline.\n"
             "Exec=/opt/emberwood-kotlin/bin/emberwood-kotlin\nIcon=emberwood-kotlin\n"
-            "Terminal=false\nCategories=Game;AdventureGame;\nStartupWMClass=Emberwood Kotlin\n",
+            "Terminal=false\nCategories=Game;AdventureGame;\nStartupWMClass=emberwood-MainKt\n",
         )
         if shutil.which("desktop-file-validate"):
             call("desktop-file-validate", desktop)

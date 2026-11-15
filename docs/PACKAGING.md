@@ -64,3 +64,27 @@ and Ruff check/format checks pass for the packaging/bootstrap tooling.
 
 These fixture tests do not substitute for the native game's final package/control
 checks or macOS CI results, which are recorded in the overall verification report.
+
+## Actual Linux package and launcher checks
+
+The Linux x86-64 candidate was built with `python3 tools/package_app.py --skip-build`.
+Both archive and Debian-package SHA-256 files were verified. The actual package
+passed `python3 tools/test_package.py dist/emberwood-kotlin-0.1.0-linux-x86_64`:
+isolated installation, bundled Java 25 version, desktop metadata, upgrade replacing
+obsolete files, and uninstall retaining the settings location.
+
+The installed game was also launched through Gio with invalid `JAVA_HOME` and
+`EMBERWOOD_JAVA_HOME` values, while a child-only seccomp rule denied all IPv4/IPv6
+socket creation. A separate socket probe confirmed that the restriction was active.
+The game rendered, accepted Start/D/Space/Escape, and exited from its window close
+command. Its `/proc` executable resolved to the installed private runtime. This
+caught a desktop-grouping mismatch: Java's actual window class is `emberwood-MainKt`,
+which the installer and Debian desktop files now use.
+
+The separate **Emberwood Kotlin** entry is installed for the current Linux user.
+`gtk-launch org.emberwood.kotlin` was exercised with the same offline restriction;
+the title and paused screen were inspected. A repeat under an isolated Openbox
+window manager pressed physical Alt+F4 and verified that the installed process
+exited. The original **Emberwood** desktop entry
+and repository remain unchanged. Local evidence is in `build/installed-audit/`,
+`build/installed-user-audit/`, and `build/package-install-audit.log`.

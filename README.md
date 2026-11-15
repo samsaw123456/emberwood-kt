@@ -40,14 +40,19 @@ keeps your settings. The original **Emberwood** launcher stays available too.
 Campfires save your place within the current level and award equipment. Spikes,
 critters and falls send you back to camp. Bosses reveal their gold weak point
 while resting. Collect the three acorns to open each exit. Hidden fireflies and
-gems are optional. Treasure chests, bonus leaf shields and the following firefly
-companion from the reverted Godot update are not part of this edition.
+gems are optional.
 
 ## Build or edit
 
-Clone this repository, then run `./emberwood-kotlin`. The first run downloads a
-private, checksum-verified **Temurin Java 25.0.5+8**, uses the checked-in
-**Gradle 9.9.1** wrapper, and builds with **Kotlin 2.4.21**. It leaves your global
+```sh
+git clone https://github.com/samsaw123456/emberwood-kt.git
+cd emberwood-kt
+./emberwood-kotlin
+```
+
+The first run downloads a private, checksum-verified **Temurin Java 25.0.5+8**,
+uses the checked-in **Gradle 9.9.1** wrapper, and builds with **Kotlin 2.4.21**.
+It leaves your global
 Java installation alone. Linux/macOS need their normal shell, `tar`, and either
 `curl` or `wget` for this source-build route; use a bundled release to skip that.
 
