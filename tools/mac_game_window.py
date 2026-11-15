@@ -151,7 +151,7 @@ class GameWindow:
                 self.foundation.CFRelease(value)
 
     def visible_registry(self):
-        """Window IDs/owner PIDs only, to detect leftover test dialogs."""
+        """Visible IDs, owner PIDs and layers, including system-owned consent dialogs."""
         keys = [
             self.foundation.CFStringCreateWithCString(None, name.encode(), 0x08000100)
             for name in ("kCGWindowNumber", "kCGWindowOwnerPID", "kCGWindowLayer")
@@ -172,8 +172,8 @@ class GameWindow:
                     ):
                         break
                     values.append(value.value)
-                if len(values) == 3 and values[2] == 0:
-                    result.add(tuple(values[:2]))
+                if len(values) == 3:
+                    result.add(tuple(values))
             return result
         finally:
             if windows:

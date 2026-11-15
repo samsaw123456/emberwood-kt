@@ -199,7 +199,12 @@ def main():
         path = directory / f"{label}.wav"
         with (directory / f"{label}-capture.log").open("w") as capture_log:
             capture = subprocess.Popen(
-                [helper, str(pid), path],
+                [
+                    helper,
+                    str(pid),
+                    path,
+                    *(["--native-fixture", native_app] if native_app else []),
+                ],
                 stdout=subprocess.PIPE,
                 stderr=capture_log,
                 text=True,

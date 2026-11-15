@@ -20,7 +20,7 @@ from mac_profile_observer import NativeStatus
 
 
 def cleanup_app(pid, executable, windows, baseline, output):
-    """Wait for this app and new ordinary windows to leave before another probe."""
+    """Wait for this app and all new visible windows to leave before another probe."""
     record = {"pid": pid, "signals": [], "result": "UNVERIFIED"}
 
     def alive():

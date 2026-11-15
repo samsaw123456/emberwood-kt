@@ -6,9 +6,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from mac_bundle_smoke import cleanup_app
+from mac_game_window import GameWindow
 
 
 class Windows:
@@ -28,6 +30,36 @@ class Windows:
 
 
 class CleanupTests(unittest.TestCase):
+    def test_registry_keeps_the_nonordinary_dialog_layer(self):
+        records = [
+            {
+                b"kCGWindowNumber": (11,),
+                b"kCGWindowOwnerPID": (90,),
+                b"kCGWindowLayer": (0,),
+            },
+            {
+                b"kCGWindowNumber": (12,),
+                b"kCGWindowOwnerPID": (91,),
+                b"kCGWindowLayer": (8,),
+            },
+        ]
+
+        def number(item, _kind, output):
+            output._obj.value = item[0]
+            return True
+
+        window = GameWindow.__new__(GameWindow)
+        window.core = SimpleNamespace(CGWindowListCopyWindowInfo=lambda *_: records)
+        window.foundation = SimpleNamespace(
+            CFStringCreateWithCString=lambda _allocator, text, _encoding: text,
+            CFArrayGetCount=len,
+            CFArrayGetValueAtIndex=lambda array, index: array[index],
+            CFDictionaryGetValue=lambda record, key: record.get(key),
+            CFNumberGetValue=number,
+            CFRelease=lambda _value: None,
+        )
+        self.assertEqual(window.visible_registry(), {(11, 90, 0), (12, 91, 8)})
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -87,6 +119,25 @@ class CleanupTests(unittest.TestCase):
         result = json.loads((self.output / "cleanup.json").read_text())
         self.assertEqual(result["result"], "UNVERIFIED")
         self.assertEqual(result["new_windows_remaining"], [[99, 123]])
+
+    def test_detached_system_dialog_never_causes_other_process_signals(self):
+        self.process.terminate()
+        self.process.wait(timeout=5)
+        self.windows.visible_registry = lambda: {(99, 123, 8)}
+        with (
+            patch("mac_bundle_smoke.time.monotonic", side_effect=[0, 6]),
+            patch("mac_bundle_smoke.os.kill", side_effect=ProcessLookupError) as kill,
+            self.assertRaisesRegex(RuntimeError, "later probes must not run"),
+        ):
+            self.clean()
+        self.assertTrue(kill.call_args_list)
+        self.assertTrue(
+            all(call.args == (self.process.pid, 0) for call in kill.call_args_list)
+        )
+        result = json.loads((self.output / "cleanup.json").read_text())
+        self.assertEqual(result["result"], "UNVERIFIED")
+        self.assertEqual(result["signals"], [])
+        self.assertEqual(result["new_windows_remaining"], [[99, 123, 8]])
 
 
 if __name__ == "__main__":

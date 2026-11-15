@@ -15,6 +15,53 @@ enum CaptureFailure: Error, CustomStringConvertible {
     }
 }
 
+func verifyNativeFixture(_ appPath: String, pid: Int32) throws {
+    let app = URL(fileURLWithPath: appPath).resolvingSymlinksInPath()
+    let contents = app.appendingPathComponent("Contents")
+    let metadata = try PropertyListSerialization.propertyList(
+        from: Data(contentsOf: contents.appendingPathComponent("Info.plist")), format: nil)
+    guard let info = metadata as? [String: Any],
+          info["CFBundleIdentifier"] as? String == "org.emberwood.kotlin",
+          info["CFBundleExecutable"] as? String == "Emberwood Kotlin" else {
+        throw CaptureFailure.unavailable("Native capture target is not the isolated Emberwood app")
+    }
+    let executable = contents.appendingPathComponent("MacOS/Emberwood Kotlin").resolvingSymlinksInPath()
+    let config = try String(contentsOf: contents.appendingPathComponent("app/Emberwood Kotlin.cfg"), encoding: .utf8)
+    var section = ""
+    var mains: [String] = []
+    for raw in config.components(separatedBy: .newlines) {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+        if line.hasPrefix("[") { section = line }
+        if section == "[Application]", line.hasPrefix("app.mainclass=") {
+            mains.append(String(line.dropFirst("app.mainclass=".count)))
+        }
+    }
+    guard mains == ["emberwood.AudioStateFixture"] else {
+        throw CaptureFailure.unavailable("Native capture target is not configured as the audio fixture")
+    }
+    // The native launcher embeds its main class in .cfg, not its argv. Recheck
+    // kernel executable identity instead of weakening the fixture/PID boundary.
+    guard let library = dlopen("/usr/lib/libproc.dylib", RTLD_NOW | RTLD_LOCAL) else {
+        throw CaptureFailure.unavailable("Native process identity facility is unavailable")
+    }
+    defer { dlclose(library) }
+    guard let symbol = dlsym(library, "proc_pidpath") else {
+        throw CaptureFailure.unavailable("Native process identity function is unavailable")
+    }
+    typealias ProcessPath = @convention(c) (Int32, UnsafeMutableRawPointer?, UInt32) -> Int32
+    let processPath = unsafeBitCast(symbol, to: ProcessPath.self)
+    var bytes = [CChar](repeating: 0, count: 4096)
+    let count = bytes.withUnsafeMutableBytes { processPath(pid, $0.baseAddress, UInt32($0.count)) }
+    guard count > 0 else {
+        throw CaptureFailure.unavailable("Native capture process executable is unavailable")
+    }
+    let path = String(decoding: bytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    let actual = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+    guard actual == executable else {
+        throw CaptureFailure.unavailable("Native capture PID does not match the exact launched executable")
+    }
+}
+
 struct BufferTiming: Codable {
     let presentationSeconds: Double?
     let declaredFrames: Int
@@ -154,9 +201,25 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 struct GameAudioCapture {
     static func main() async {
         do {
-            guard CommandLine.arguments.count == 3,
+            let arguments = CommandLine.arguments
+            if arguments.count == 4, arguments[1] == "--verify-native-fixture" {
+                guard let pid = Int32(arguments[2]), pid > 1, pid != getpid() else {
+                    throw CaptureFailure.unavailable("Invalid native fixture PID")
+                }
+                try verifyNativeFixture(arguments[3], pid: pid)
+                print("PASS: exact native fixture identity; no capture or permission request")
+                return
+            }
+            guard [3, 5].contains(arguments.count),
                   let pid = Int32(CommandLine.arguments[1]), pid > 1, pid != getpid() else {
-                throw CaptureFailure.unavailable("Usage: mac-audio-capture GAME_FIXTURE_PID OUTPUT.wav")
+                throw CaptureFailure.unavailable("Usage: mac-audio-capture GAME_FIXTURE_PID OUTPUT.wav [--native-fixture APP]")
+            }
+            let nativeFixture = arguments.count == 5
+            if nativeFixture {
+                guard arguments[3] == "--native-fixture" else {
+                    throw CaptureFailure.unavailable("Unknown native capture option")
+                }
+                try verifyNativeFixture(arguments[4], pid: pid)
             }
             let check = Process()
             check.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -166,7 +229,8 @@ struct GameAudioCapture {
             try check.run()
             let command = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             check.waitUntilExit()
-            guard check.terminationStatus == 0, command.contains("emberwood.AudioStateFixture"),
+            guard check.terminationStatus == 0,
+                  nativeFixture || command.contains("emberwood.AudioStateFixture"),
                   command.contains("--data-dir") else {
                 throw CaptureFailure.unavailable("Refusing to capture a process other than the explicitly launched Emberwood audio fixture")
             }

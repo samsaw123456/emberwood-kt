@@ -10,6 +10,7 @@ case ${1:-} in
     --help|-h)
         printf '%s\n' 'Emberwood Kotlin' 'Usage: ./emberwood-kotlin [--build | --offline] [game options]' \
             'First source launch downloads a private Java 25 and builds the game.' \
+            'Later launches rebuild changed game sources automatically, including from Zed.' \
             'Bundled application downloads need no Java, Gradle or developer tools.' \
             '  --build     prepare the game without opening a window' \
             '  --offline   use an existing build without downloading anything'
