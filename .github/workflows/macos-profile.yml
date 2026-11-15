@@ -24,7 +24,7 @@ on:
         type: choice
         required: true
         default: performance
-        options: [performance, controls, controls-targeted, controls-capture, controls-buffering-compare, controls-scheduled, controls-opengl, main-movement, compare-launchers, audio, audio-trace]
+        options: [performance, controls, controls-targeted, controls-capture, controls-buffering-compare, controls-scheduled, controls-opengl, main-movement, services-registration, compare-launchers, audio, audio-trace]
       held_capture:
         description: Main movement only — snapshot or independent stream during the fixed hold
         type: choice
@@ -109,11 +109,14 @@ jobs:
                 *) exit 2 ;;
               esac
               python3 tools/mac_main_movement.py --output build/main-movement-native-app "${main_args[@]}" ;;
+            services-registration)
+              "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test emberwood.MacApplicationMenuProbe --observe-registration build/mac-services-registration ;;
             compare-launchers)
               python3 tools/mac_profile_compare.py --java-home "$JAVA_HOME" --soak-seconds "$SOAK_SECONDS" ;;
             *) exit 2 ;;
           esac
       - name: Verify native menu identity and lifecycle
+        if: inputs.audit != 'services-registration'
         timeout-minutes: 2
         run: >-
           "$JAVA_HOME/bin/java" --enable-native-access=ALL-UNNAMED
@@ -132,6 +135,7 @@ jobs:
             build/controls-capture-comparison/
             build/main-movement-native-app/
             build/mac-menu-probe/
+            build/mac-services-registration/
             build/performance-launcher-comparison/
             build/audio-native-app/
             build/reports/tests/
