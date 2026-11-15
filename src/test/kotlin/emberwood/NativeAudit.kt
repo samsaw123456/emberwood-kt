@@ -37,6 +37,7 @@ private class NativeAudit(
     private val pendingImages = mutableListOf<Pair<String, BufferedImage>>()
     private val presentationTimings = mutableListOf<String>()
     private val presentationStages = mutableListOf<String>()
+    private val jumpObservations = mutableListOf<String>()
     private var presentationNonce = 65535
 
     private data class Delivery(
@@ -207,6 +208,10 @@ private class NativeAudit(
                 edt { keyReceipts.joinToString("\n", postfix = "\n") },
             )
             Files.writeString(
+                output.resolve("jump-observations.jsonl"),
+                jumpObservations.joinToString("\n", postfix = "\n"),
+            )
+            Files.writeString(
                 output.resolve("presentation-stages.jsonl"),
                 presentationStages.joinToString("\n", postfix = "\n"),
             )
@@ -334,10 +339,13 @@ private class NativeAudit(
         }
         stage("edt-paint", started)
         val syncStarted = System.nanoTime()
-        java.awt.Toolkit
-            .getDefaultToolkit()
-            .sync()
-        stage("toolkit-sync", syncStarted)
+        if (!NativeAuditTools.hasExternalController) {
+            java.awt.Toolkit
+                .getDefaultToolkit()
+                .sync()
+        }
+        // The external path already proves presentation with the captured current nonce.
+        stage(if (NativeAuditTools.hasExternalController) "toolkit-sync-skipped-external" else "toolkit-sync", syncStarted)
         val boundsStarted = System.nanoTime()
         val bounds =
             edt {
@@ -703,27 +711,112 @@ private class NativeAudit(
         for (key in jumpKeys) {
             case(KeyEvent.getKeyText(key), GameState.PLAYING, "Rise, hold, release-cut, double jump, reject third jump, land and recover") {
                 val groundY = foxCenter(snap("jump-ground")).second
+                // Each trial starts on ordinary ground; capture latency never schedules an air jump.
                 down(key)
-                delay(130)
-                check(foxCenter(snap("jump-held")).second < groundY - 30)
-                up(key)
-                delay(60)
-                snap("jump-released")
+                val heldY =
+                    try {
+                        delay(220)
+                        val y = foxCenter(snap("jump-held")).second
+                        check(y < groundY - 30) { "Held jump did not visibly rise: ground=$groundY, held=$y" }
+                        delay(1500)
+                        snap("jump-held-through-landing")
+                        check(edt { panel.game.player.grounded && panel.game.player.jumpsLeft == 2 }) {
+                            "A held jump retriggered after landing"
+                        }
+                        y
+                    } finally {
+                        up(key)
+                    }
+                snap("jump-held-released")
+
                 down(key)
-                delay(40)
-                check(edt { panel.game.player.jumpsLeft == 0 && panel.game.player.vy < 0 })
-                snap("jump-second")
-                up(key)
-                tap(key)
-                snap("jump-third-rejected") { check(panel.game.player.jumpsLeft == 0) }
-                delay(1100)
+                val (sample, beforeCut) =
+                    try {
+                        await("Short trial begins one held jump") {
+                            edt { !panel.game.player.grounded && panel.game.player.jumpsLeft == 1 }
+                        }
+                        delay(20)
+                        val first = observeJump("short-held-gravity-sample")
+                        delay(35)
+                        val last = observeJump("before-short-release")
+                        check(!first.grounded && !last.grounded && first.velocity < 0 && last.velocity < 0 && last.cutAvailable) {
+                            "Short-release trial must release a still-held jump during ascent: first=$first, last=$last"
+                        }
+                        check(last.elapsed > first.elapsed && last.velocity > first.velocity) {
+                            "The unreleased samples must observe ordinary upward deceleration: first=$first, last=$last"
+                        }
+                        first to last
+                    } finally {
+                        up(key)
+                    }
+                await("Short release applies its cut") { edt { !panel.game.player.jumpCutAvailable } }
+                val afterCut = observeJump("after-short-release")
+                val observedGravity = (beforeCut.velocity - sample.velocity) / (beforeCut.elapsed - sample.elapsed)
+                val uncutVelocity = beforeCut.velocity + observedGravity * (afterCut.elapsed - beforeCut.elapsed)
+                check(!afterCut.grounded && afterCut.velocity < 0 && afterCut.velocity - uncutVelocity > abs(beforeCut.velocity) * .25) {
+                    "Physical release must reduce upward speed beyond observed gravity: before=$beforeCut, " +
+                        "after=$afterCut, observedGravity=$observedGravity, predictedUncutVelocity=$uncutVelocity"
+                }
+                val shortY = foxCenter(snap("jump-short-released")).second
+                check(shortY > heldY + 15 && shortY < groundY - 5) {
+                    "Released jump must remain visibly airborne below the held jump: held=$heldY, released=$shortY, ground=$groundY"
+                }
+                await("Short released jump lands") { edt { panel.game.player.grounded && panel.game.player.jumpsLeft == 2 } }
+                snap("jump-short-landed")
+
+                down(key)
+                try {
+                    delay(90)
+                    check(edt { !panel.game.player.grounded && panel.game.player.jumpsLeft == 1 }) {
+                        "Double-jump trial did not begin with one ordinary airborne jump"
+                    }
+                    observeJump("first-jump-before-release")
+                } finally {
+                    up(key)
+                }
+                observeJump("before-second-press")
+                check(edt { !panel.game.player.grounded && panel.game.player.jumpsLeft == 1 }) {
+                    "The first jump landed before the second physical press; this is not double-jump evidence"
+                }
+                down(key)
+                try {
+                    delay(40)
+                    val second = observeJump("second-jump-consumed")
+                    check(second.jumpsLeft == 0 && second.velocity < 0 && second.cutAvailable) {
+                        "The second physical press did not start an uncut air jump: $second"
+                    }
+                    snap("jump-second")
+                } finally {
+                    up(key)
+                }
+                await("Second release is processed before third-press observation") { edt { !panel.game.player.jumpCutAvailable } }
+                val beforeThird = observeJump("before-third-press")
+                check(!beforeThird.grounded && beforeThird.jumpsLeft == 0) {
+                    "Third press must occur before landing, with no jumps remaining: $beforeThird"
+                }
+                down(key)
+                try {
+                    val receivedAt = edt { panel.game.elapsed }
+                    await("Third press reaches a simulation step after its receipt") { edt { panel.game.elapsed > receivedAt } }
+                    val third = observeJump("third-press-consumed")
+                    check(!third.grounded && third.jumpsLeft == 0 && third.velocity >= beforeThird.velocity) {
+                        "Rejected third press must not restart an upward impulse: before=$beforeThird, after=$third"
+                    }
+                    snap("jump-third-rejected") {
+                        check(!panel.game.player.grounded && panel.game.player.jumpsLeft == 0) {
+                            "Third-jump rejection must be observed before landing, with no jumps remaining"
+                        }
+                    }
+                    check(edt { !panel.game.player.grounded && panel.game.player.jumpsLeft == 0 }) {
+                        "Capture completed after landing; third-jump rejection is not yet visually proved"
+                    }
+                } finally {
+                    up(key)
+                }
+                await("Double jump lands and restores both jumps") {
+                    edt { panel.game.player.grounded && panel.game.player.jumpsLeft == 2 }
+                }
                 snap("jump-landed")
-                check(edt { panel.game.player.grounded && panel.game.player.jumpsLeft == 2 })
-                down(key)
-                delay(1500)
-                snap("jump-held-through-landing")
-                check(edt { panel.game.player.grounded && panel.game.player.jumpsLeft == 2 })
-                up(key)
             }
         }
         case("Space + W + Up releases", GameState.PLAYING, "Alternate held jump keys form one jump; only releasing every key cuts it") {
@@ -736,10 +829,34 @@ private class NativeAudit(
             check(edt { panel.game.player.jumpsLeft == 1 })
             physical("up" to false, "space" to true)
             await("Alternate jump is consumed") { edt { panel.game.player.jumpsLeft == 0 } }
+            val repressed = observeJump("alternate-immediate-repress")
+            check(repressed.jumpsLeft == 0 && repressed.velocity < 0 && repressed.cutAvailable) {
+                "The previous binding's release must not cut the new held air jump: $repressed"
+            }
             snap("jump-alternate-repress") { check(panel.game.player.jumpsLeft == 0) }
             physical("space" to false)
         }
     }
+
+    private data class JumpObservation(
+        val elapsed: Double,
+        val velocity: Double,
+        val grounded: Boolean,
+        val jumpsLeft: Int,
+        val cutAvailable: Boolean,
+    )
+
+    private fun observeJump(phase: String): JumpObservation =
+        edt {
+            val player = panel.game.player
+            val elapsed = panel.game.elapsed
+            jumpObservations.add(
+                "{\"case\":${NativeAuditTools.quote(currentCase)},\"phase\":${NativeAuditTools.quote(phase)}," +
+                    "\"nanos\":${System.nanoTime()},\"elapsed\":$elapsed,\"y\":${player.y},\"vy\":${player.vy}," +
+                    "\"grounded\":${player.grounded},\"jumpsLeft\":${player.jumpsLeft},\"cutAvailable\":${player.jumpCutAvailable}}",
+            )
+            JumpObservation(elapsed, player.vy, player.grounded, player.jumpsLeft, player.jumpCutAvailable)
+        }
 
     private fun gentleCameraDirections() {
         for ((key, sign) in directions) {

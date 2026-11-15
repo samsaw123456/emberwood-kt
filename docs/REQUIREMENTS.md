@@ -29,6 +29,11 @@ facilities or untested rows passed. No finite test set establishes zero bugs.
 
 Current assessment (final platform verification remains open):
 
+A newly reproduced same-step jump release/re-press ordering defect is corrected
+in build `7d9668ed`, with seven actual-handler regressions passing (three failed
+on the old code). Full final-build revalidation remains open. The 88283267 results
+in the table are preserved baseline observations, not proof for the corrected build.
+
 | Area | Evidence and remaining work |
 | --- | --- |
 | Core loop | Simulation and normal-rate native input complete all 20 levels, six guardians and 60 acorns. Final-commit CI at cacc4dc ends at 08:19 with one actual fall/retry, 201/378 gems and all 20 fireflies; its job succeeds. The d5499672 repeat separately records Java and wrapper exit 0. The earlier ce6 run remains historical evidence. |

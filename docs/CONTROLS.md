@@ -5,6 +5,14 @@ in [controls-audit.tsv](controls-audit.tsv). Every row has an explicit result;
 unverified platforms and missing audio evidence remain unverified. A simulation
 campaign does not mark physical controls passed.
 
+The recorded 88283267 results are retained as a baseline. A newer native jump
+trial exposed stale release input shortening an immediate re-press. Corrected
+build `7d9668ed` passes its automated regressions, but final physical verification
+is open until the complete inventory runs again. Every platform cell in the
+tracked table is explicitly unverified for the new build. Earlier passes are
+not transferred; its prior table is retained at
+`build/regressions/jump-order/controls-baseline-88283267.tsv`.
+
 The native audit injects OS input and captures before/during/after window frames.
 Its automatic assertions are followed by inspection of every referenced frame.
 Source results live in `build/audit/controls.tsv`; bundled-runtime results live

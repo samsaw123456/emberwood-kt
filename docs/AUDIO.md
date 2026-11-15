@@ -1,8 +1,17 @@
 # Desktop playback
 
-## Current build
+## Current validation status
 
-Production JAR `88283267eefaf417da4965a1248c1b70b9188effd71f6ee3f69cc2c1911e5bc1`
+The current JAR is
+`7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
+It fixes release-then-press ordering for a new jump within one simulation tick.
+All 57 unit tests and a focused nine-case physical-input audit pass. Fresh
+cross-platform PCM and complete control validation for this JAR are pending;
+the earlier output proof below is retained against its original hash.
+
+## Retained 88283267 baseline
+
+Previous JAR `88283267eefaf417da4965a1248c1b70b9188effd71f6ee3f69cc2c1911e5bc1`
 has actual-output proof for all fourteen physical sound-control cases on Linux
 x86-64/ARM64 and native Mac Intel/ARM64. Each case measures an audible reference,
 cutoff while playing, suppressed output, and restored output. A functional mute
@@ -12,8 +21,8 @@ pass is distinct from uninterrupted audio quality.
 | --- | --- | --- |
 | Linux x86-64, source and bundle, run 43719750356 | 14/14 per route; all 168 WAVs inspected | No interior exact-zero span of at least 2 ms |
 | Linux ARM64, source and bundle, run 43719750356 | 14/14 per route; all 168 WAVs inspected | Three mute cutoffs have a 10.667 ms zero interval before a 1.56–1.63 ms residual tail; reference/restored cues are intact |
-| Mac ARM64, native app with test-only trace, run 43719992137 | 14/14; all 84 WAVs inspected | No interior exact-zero span of at least 2 ms in this repeat; earlier 11.604 ms gap remains unexplained |
-| Mac Intel, native app with test-only trace, run 43719992137 | 14/14; all 84 WAVs inspected | No interior exact-zero span of at least 2 ms in this repeat; earlier four 16.52–24.06 ms gaps remain unexplained |
+| Mac ARM64, native app without trace, run 43721920267 | 14/14; all 84 WAVs inspected | No interior exact-zero span of at least 2 ms in this repeat; earlier 11.604 ms gap remains unexplained |
+| Mac Intel, native app without trace, run 43721920267 | 14/14; all 84 WAVs inspected | No interior exact-zero span of at least 2 ms in this repeat; earlier four 16.52–24.06 ms gaps remain unexplained |
 
 All waveform panels were visually inspected and their measurements independently
 recomputed. Muted windows are exactly silent; cutoff windows have a nonzero
@@ -24,19 +33,32 @@ exact app process through ScreenCaptureKit. No microphone or system mix is used.
 
 The final Intel Mac matrix `43715704373` completed both performance routes but
 its audio step was skipped after a test-only control-marker failure. The separate
-native trace repeat above supplies fresh actual-output proof with the same
-production game/runtime. Its adapter retains exact generated and native-submitted
-PCM without changing production buffers or synthesis. Instrumentation changes
-diagnostic timing, so the absence of a repeated gap does not identify the earlier
-cause. Audio continuity remains unresolved; the game is not described as having
-flawless output.
+native repeat above supplies fresh actual-output proof with the same production
+game/runtime and no trace adapter. The preceding traced repeat `43719992137`
+also passed, retaining exact generated and native-submitted PCM. Neither repeat
+reproduced the earlier gaps. This confirms the successful output was not confined
+to the instrumented path, but a bounded repeat cannot identify the earlier cause
+or prove flawless playback on every machine. Production buffers, synthesis and
+verification thresholds remain unchanged.
 
 Evidence: [final Linux output run](https://github.com/samsaw123456/emberwood-kt/actions/runs/43719750356)
-and [native Mac trace repeat](https://github.com/samsaw123456/emberwood-kt/actions/runs/43719992137).
+and [untraced native Mac repeat](https://github.com/samsaw123456/emberwood-kt/actions/runs/43721920267).
 Independent journals and original recordings are retained under
 `build/ci-audio-dependencies-linux-{x64,arm64}/build/audio-linux/{source,packaged}/independent-review/`
-and `build/ci-audio-trace-macos-{arm,intel}/audio-native-app/pcm/independent-review/`.
-The original failures and untraced recordings remain in the investigation history.
+and `build/ci-audio-untraced-macos-{arm,intel}/build/audio-native-app/pcm/independent-review/`.
+The [traced repeat](https://github.com/samsaw123456/emberwood-kt/actions/runs/43719992137),
+original failures and earlier recordings remain in the investigation history.
+
+The final untraced recordings preserve thirteen capture-PTS discrepancies on ARM
+and one on Intel, separately from PCM continuity. All complete short and long cues
+retain their expected duration within one 48 kHz sample. The paired host/wall
+clock receipts cover all 168 recordings; maximum observed GC pauses are 26.048 ms
+on ARM and 5.441 ms on Intel. No PCM gap recurred to correlate with a pause. These
+receipts retain clock-rate differences and sampling uncertainty rather than
+equating wall time with the monotonic capture clock. Both cleanup screenshots per
+architecture were inspected, and all original recording hashes match the native
+completion receipts. Cross-run package checks also verify unchanged runtime,
+application contents and signing policy.
 
 ## Playback implementation
 

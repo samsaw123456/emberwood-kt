@@ -17,6 +17,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from diagnose_mac_output import default_output
+from mac_process_state import terminal_process_state
 from mac_profile_observer import NativeStatus
 from mac_test_bridge import Controller
 from package_integrity import tree_digest
@@ -126,10 +127,9 @@ def owned_app_pid(native, app, controller, known_pid):
     try:
         executable = controller.windows.executable(candidate)
     except RuntimeError:
-        # An exited child has no proc_pidpath. A live unidentified PID is never killed.
-        try:
-            os.kill(candidate, 0)
-        except ProcessLookupError:
+        # A terminal child has no executable path but can remain an unreaped PID.
+        # Liveness alone never permits signaling an unidentified process.
+        if terminal_process_state(candidate) is not None:
             return None
         raise
     return candidate if executable == controller.executable else None
@@ -210,7 +210,26 @@ def launch_profile(app, output, timeout, controller, audit="performance", second
                     raise TimeoutError("Native app profile did not finish in time")
                 pid = pid or controller.pid or app_pid(native, app)
                 if pid:
-                    controller.identify(pid)
+                    try:
+                        controller.identify(pid)
+                    except RuntimeError:
+                        terminal = terminal_process_state(pid)
+                        if terminal is None:
+                            raise
+                        log.write(
+                            json.dumps(
+                                {
+                                    "pid": pid,
+                                    "terminal_process_state": terminal,
+                                    "elapsed_seconds": elapsed,
+                                }
+                            )
+                            + "\n"
+                        )
+                        # LaunchServices can lag the app's terminal transition.
+                        # It must still finish, and completion must still validate.
+                        process.wait(timeout=5)
+                        break
                     row = native.sample_and_wait(pid)
                     if row.get("resident_set_kib") is not None:
                         rss_samples.append(row["resident_set_kib"])
@@ -232,13 +251,15 @@ def launch_profile(app, output, timeout, controller, audit="performance", second
                 )
                 + "\n"
             )
-        if process.returncode:
-            raise RuntimeError(f"LaunchServices exited with {process.returncode}")
         completion = output / "completion.json"
         if not completion.is_file():
+            if process.returncode:
+                raise RuntimeError(f"LaunchServices exited with {process.returncode}")
             raise RuntimeError("Native audit ended without its completion record")
         result = json.loads(completion.read_text())
         validate_completion(result, audit, seconds)
+        if process.returncode:
+            raise RuntimeError(f"LaunchServices exited with {process.returncode}")
         if not pid:
             raise RuntimeError(
                 "Audit reported success but no native app PID was observed"
@@ -247,24 +268,32 @@ def launch_profile(app, output, timeout, controller, audit="performance", second
     finally:
         for kind, handler in previous.items():
             signal.signal(kind, handler)
-        # Only the exact private bundle we launched can be terminated here.
-        owned = owned_app_pid(native, app, controller, pid)
-        if owned:
-            try:
-                os.kill(owned, signal.SIGTERM)
-                deadline = time.monotonic() + 5
-                while (
-                    owned_app_pid(native, app, controller, owned) == owned
-                    and time.monotonic() < deadline
-                ):
-                    time.sleep(0.1)
-                if owned_app_pid(native, app, controller, owned) == owned:
-                    os.kill(owned, signal.SIGKILL)
-            except ProcessLookupError:
-                pass  # The exact private process exited between lookup and signal.
-        if process and process.poll() is None:
-            process.terminate()
-            process.wait(timeout=5)
+        try:
+            # Only the exact private bundle we launched can be terminated here.
+            owned = owned_app_pid(native, app, controller, pid)
+            if owned:
+                try:
+                    os.kill(owned, signal.SIGTERM)
+                    deadline = time.monotonic() + 5
+                    while (
+                        owned_app_pid(native, app, controller, owned) == owned
+                        and time.monotonic() < deadline
+                    ):
+                        time.sleep(0.1)
+                    if owned_app_pid(native, app, controller, owned) == owned:
+                        os.kill(owned, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # The exact private process exited between lookup and signal.
+        finally:
+            # This Popen child is always ours, even if the game's identity became
+            # unavailable. Reap the launcher without touching that unknown PID.
+            if process and process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
 
 
 def run_owned_check(app, command, output, timeout):

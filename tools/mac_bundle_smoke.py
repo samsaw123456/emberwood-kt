@@ -16,6 +16,7 @@ from mac_app_profile import app_pid
 from mac_audio_audit import capture_initialization_stacks
 from mac_game_focus import NativeFocusUnavailable, require_game_window
 from mac_game_window import GameWindow
+from mac_process_state import terminal_process_state
 from mac_profile_observer import NativeStatus
 
 
@@ -45,9 +46,7 @@ def cleanup_app(pid, executable, windows, baseline, output):
         try:
             return windows.executable(pid) == executable
         except RuntimeError:
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
+            if terminal_process_state(pid) is not None:
                 return False
             raise  # Never signal a live process whose identity is unavailable.
 

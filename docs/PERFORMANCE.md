@@ -1,8 +1,17 @@
 # Performance verification
 
-## Current build
+## Current validation status
 
-Production JAR `88283267eefaf417da4965a1248c1b70b9188effd71f6ee3f69cc2c1911e5bc1`
+The current JAR is
+`7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
+It fixes release-then-press ordering for a new jump within one simulation tick.
+All 57 unit tests and a focused nine-case physical-input audit pass. Fresh
+cross-platform performance and complete control validation for this JAR are
+pending. The prior measurements below retain their original build identity.
+
+## Retained 88283267 baseline
+
+Previous JAR `88283267eefaf417da4965a1248c1b70b9188effd71f6ee3f69cc2c1911e5bc1`
 passes every performance threshold on Linux x86-64/ARM64 and both native Mac
 launch routes on Intel/ARM64. Each row below includes all 22 measurement windows
 and a full 180-second input soak with a 128 MiB Java heap and two visible
@@ -40,10 +49,14 @@ Independent metric checks, exact frame hashes and visual journals are retained i
 and `build/ci-native-final-macos-{arm,intel}/build/performance-{source,native}-app/independent-review/`.
 The Intel Mac run's later control audit failed before input because its test
 marker did not survive display color conversion; its audio step was skipped.
-The separate native trace repeat `43719992137` subsequently completed all fourteen
-physical audio cases on each Mac. Control coverage remains separate from these
-performance checks. Actual audio continuity findings and follow-up diagnostics
-are recorded in [AUDIO.md](AUDIO.md).
+The separate native trace repeat `43719992137` and final untraced repeat
+[`43721920267`](https://github.com/samsaw123456/emberwood-kt/actions/runs/43721920267)
+subsequently completed all fourteen physical audio cases on each Mac with the
+same application/runtime. Neither repeat reproduced the earlier audio gaps;
+their cause remains unexplained. These audio checks are not new performance
+measurements. Control coverage remains separate from these performance checks.
+Actual audio continuity findings and follow-up diagnostics are recorded in
+[AUDIO.md](AUDIO.md).
 
 ## Audit method
 

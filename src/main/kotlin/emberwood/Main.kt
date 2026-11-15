@@ -289,7 +289,11 @@ class GamePanel(
         val wasJumping = jumping()
         val wasDashing = KeyEvent.VK_SHIFT in held
         held.add(key)
-        if (key in JUMP_KEYS && !wasJumping) jumpPress = true
+        if (key in JUMP_KEYS && !wasJumping) {
+            jumpPress = true
+            // A release before this press belongs to the previous jump, not the new one.
+            jumpRelease = false
+        }
         if (key == KeyEvent.VK_SHIFT && !wasDashing) dashPress = true
         if (key == KeyEvent.VK_J) shootPress = true
     }

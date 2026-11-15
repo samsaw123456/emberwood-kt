@@ -16,7 +16,7 @@ python3 -m unittest discover -s tools -p 'test_install.py' -v
 ./gradlew nativeAudit
 java --enable-native-access=ALL-UNNAMED -Xmx256m \
   -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test \
-  emberwood.CampaignAudit 3
+  emberwood.CampaignAudit 20
 java --enable-native-access=ALL-UNNAMED -Xmx128m -XX:ActiveProcessorCount=2 \
   -cp build/libs/emberwood-kotlin.jar:build/classes/kotlin/test \
   emberwood.PerformanceAudit
@@ -41,6 +41,24 @@ desktop mix. Java audio flags alone do not satisfy this check.
 
 ## Current evidence
 
+The newly strengthened native jump audit exposed a production ordering defect:
+releasing jump and pressing it again before the next simulation step can apply
+the old release to the new jump. The actual Linux failure is retained at
+`build/audit-native-timing-linux/jump-observations.jsonl`. The minimal input-order
+fix now passes all seven actual-handler regressions; three failed on the old
+code. Before/after XML is retained in `build/regressions/jump-order/`. The
+88283267 results below remain build-specific baseline evidence; they do not
+verify the corrected runnable build.
+The complete final control, campaign, package and performance checks must repeat
+on that new runnable build.
+
+- Corrected jump-order native diagnostic: **nine filtered cases passed** on
+  `7d9668ed`, with all 59 referenced frames and the startup frame inspected at
+  `build/audit-jump-order-fixed-linux/REVIEW.md`. This includes all four ordinary
+  directions, Space/W/Up separately, the alternate-jump release chord and window
+  lifecycle. Observed short-release velocity changes exceed measured gravity;
+  second jumps retain their full impulse and third presses do not renew it.
+  This focused diagnostic does not mark the full inventory passed.
 - Original resources: **passed**. SHA-256 checks cover all 2,107 migrated files;
   level data contains 20 levels, 60 acorns and 378 gems.
 - Installer fixtures: **passed**. Seven tests cover first install, replacement,
@@ -49,7 +67,7 @@ desktop mix. Java audio flags alone do not satisfy this check.
 - Bootstrap: **passed**. Empty-cache Java download, checksum, extraction and
   offline reuse were exercised without changing system Java.
 - Kotlin formatting: **passed**. The current production candidate is formatted with ktlint.
-- Build, lint and automated tests: **passed**, 50 tests. The simulation campaign
+- Build, lint and automated tests: **passed**, 57 tests. The simulation campaign
   reaches all 20 levels, all 60 acorns and 20 hidden fireflies, all six guardians
   and all 13 equipment unlocks with zero retries. Optional gems collected by this
   route: 196 of 378. This is simulation evidence, not a physical-input playthrough.
@@ -160,7 +178,19 @@ desktop mix. Java audio flags alone do not satisfy this check.
   source inventory. Captured audio continuity findings remain in the audio
   journal, including one 11.604 ms interval during final cue decay; this is not
   a claim of flawless audio or speaker-hardware testing.
-- Final Intel Mac control attempt: **failed before input**. Screenshot color
+- Latest Intel Mac inventory, run 43721802571: **280 cases executed, three failed**.
+  The three failed command rows remain failed: Left's audit-only `Toolkit.sync`
+  blocked for 2.789 seconds, and blocking screenshots delayed the Space/W second
+  press until after the first jump landed. Current-frame nonce receipts and actual
+  rendered frames distinguish these harness timing errors from a direction or jump
+  implementation defect. The other 277 rows pass automatically, with complete
+  visual review deferred until the corrected final run. A separate native-process
+  monitor identity failure occurred during shutdown; clean monitor completion is
+  not claimed. Original logs, 1,199 referenced frames and failure reviews remain
+  under `build/ci-native-intel-controls-88283267/`. The test-only corrections keep
+  strict movement, airborne, jump-count and release assertions; verification is
+  still in progress.
+- First final Intel Mac control attempt: **failed before input**. Screenshot color
   conversion changed the test marker from RGB(251,1,4) to (250,3,1), so all 279
   attempted before-frame checks and the final lifecycle capture timed out. The
   retained title/paused screenshots show normal game windows, but this attempt
@@ -182,6 +212,13 @@ desktop mix. Java audio flags alone do not satisfy this check.
   PCM recordings on the same final game/runtime. Its two waveform sheets and two
   cleanup desktops were independently inspected; evidence is under
   `build/ci-audio-trace-macos-intel/audio-native-app/pcm/independent-review/`.
+  A fresh untraced run 43721920267 also passes all fourteen cases and 84 recordings
+  on each Mac architecture, with every waveform panel and both cleanup desktops
+  independently inspected. Original app-tree identity matches the reviewed
+  source/package apps. Evidence: `build/ci-audio-untraced-macos-{arm,intel}/`,
+  including `cross-run-package-review.json` and
+  `build/audio-native-app/pcm/independent-review/`. Earlier continuity findings
+  remain preserved separately; these repeats do not prove flawless hardware audio.
   This does not inherit control coverage from the failed run.
 - First actual Mac ARM application control run: **failed** on the d549 baseline.
   All 280 rows completed; 18 failed rows plus one pointer-cleanup error remain
@@ -234,9 +271,10 @@ desktop mix. Java audio flags alone do not satisfy this check.
   states without letting mute or window close hang the interface.
 
 The current local candidate JAR is
-`88283267eefaf417da4965a1248c1b70b9188effd71f6ee3f69cc2c1911e5bc1`.
+`7d9668edebc108b5d3f033f20180874942cea852676f1199a3210dd24e2f6582`.
 Separate `ktlintFormat`, then `check fatJar`, completed successfully with all
-50 tests. The final-commit CI campaign completes all twenty levels at `cacc4dc`;
+57 tests. The complete physical inventory and native campaign must repeat on
+this corrected build. The earlier CI campaign completes all twenty levels at `cacc4dc`;
 its successful job did not preserve a separate Java/wrapper numeric exit receipt.
 The instrumented d5499672 baseline supplies that separate clean-exit breakdown,
 and the earlier ce6f5af4 campaign remains historical evidence.
