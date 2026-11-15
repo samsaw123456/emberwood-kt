@@ -30,7 +30,7 @@ class Windows:
 
 
 class CleanupTests(unittest.TestCase):
-    def test_registry_keeps_the_nonordinary_dialog_layer(self):
+    def test_registry_retains_dialogs_and_excludes_only_system_owned_cursor_layer(self):
         records = [
             {
                 b"kCGWindowNumber": (11,),
@@ -42,6 +42,21 @@ class CleanupTests(unittest.TestCase):
                 b"kCGWindowOwnerPID": (91,),
                 b"kCGWindowLayer": (8,),
             },
+            {
+                b"kCGWindowNumber": (13,),
+                b"kCGWindowOwnerPID": (91,),
+                b"kCGWindowLayer": (2147483630,),
+            },
+            {
+                b"kCGWindowNumber": (14,),
+                b"kCGWindowOwnerPID": (90,),
+                b"kCGWindowLayer": (2147483630,),
+            },
+            {
+                b"kCGWindowNumber": (15,),
+                b"kCGWindowOwnerPID": (92,),
+                b"kCGWindowLayer": (2147483630,),
+            },
         ]
 
         def number(item, _kind, output):
@@ -49,7 +64,24 @@ class CleanupTests(unittest.TestCase):
             return True
 
         window = GameWindow.__new__(GameWindow)
-        window.core = SimpleNamespace(CGWindowListCopyWindowInfo=lambda *_: records)
+
+        def level(key):
+            self.assertEqual(key, 19)
+            return 2147483630
+
+        def executable(pid):
+            if pid == 92:
+                raise RuntimeError("Unidentified owner")
+            return Path(
+                "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+                if pid == 91
+                else "/application/executable"
+            ).resolve()
+
+        window.executable = executable
+        window.core = SimpleNamespace(
+            CGWindowListCopyWindowInfo=lambda *_: records, CGWindowLevelForKey=level
+        )
         window.foundation = SimpleNamespace(
             CFStringCreateWithCString=lambda _allocator, text, _encoding: text,
             CFArrayGetCount=len,
@@ -58,7 +90,11 @@ class CleanupTests(unittest.TestCase):
             CFNumberGetValue=number,
             CFRelease=lambda _value: None,
         )
-        self.assertEqual(window.visible_registry(), {(11, 90, 0), (12, 91, 8)})
+        self.assertEqual(
+            window.visible_registry(),
+            {(11, 90, 0), (12, 91, 8), (14, 90, 2147483630), (15, 92, 2147483630)},
+        )
+        self.assertEqual(window.ignored_cursor_surfaces, [(13, 91, 2147483630)])
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()

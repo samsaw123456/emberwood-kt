@@ -30,6 +30,8 @@ class GameWindow:
             ctypes.c_uint32,
         ]
         self.core.CGWindowListCopyWindowInfo.restype = ctypes.c_void_p
+        self.core.CGWindowLevelForKey.argtypes = [ctypes.c_int32]
+        self.core.CGWindowLevelForKey.restype = ctypes.c_int32
         self.core.CGRectMakeWithDictionaryRepresentation.argtypes = [
             ctypes.c_void_p,
             ctypes.POINTER(Rectangle),
@@ -151,7 +153,14 @@ class GameWindow:
                 self.foundation.CFRelease(value)
 
     def visible_registry(self):
-        """Visible IDs, owner PIDs and layers, including system-owned consent dialogs."""
+        """Visible IDs/layers, including dialogs but excluding the OS cursor surface."""
+        # kCGCursorWindowLevelKey is 19; query its level instead of assuming a value.
+        # https://developer.apple.com/documentation/coregraphics/cgwindowlevelkey/cursorwindow
+        cursor_level = self.core.CGWindowLevelForKey(19)
+        window_server = Path(
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer"
+        ).resolve()
+        self.ignored_cursor_surfaces = []
         keys = [
             self.foundation.CFStringCreateWithCString(None, name.encode(), 0x08000100)
             for name in ("kCGWindowNumber", "kCGWindowOwnerPID", "kCGWindowLayer")
@@ -173,6 +182,18 @@ class GameWindow:
                         break
                     values.append(value.value)
                 if len(values) == 3:
+                    if values[2] == cursor_level:
+                        try:
+                            is_system_cursor = (
+                                self.executable(values[1]) == window_server
+                            )
+                        except RuntimeError:
+                            is_system_cursor = (
+                                False  # Unknown owners still block cleanup.
+                            )
+                        if is_system_cursor:
+                            self.ignored_cursor_surfaces.append(tuple(values))
+                            continue
                     result.add(tuple(values))
             return result
         finally:

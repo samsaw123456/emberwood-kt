@@ -53,6 +53,9 @@ def cleanup_app(pid, executable, windows, baseline, output):
                 break
             time.sleep(0.1)
         record["new_windows_remaining"] = sorted(remaining)
+        record["ignored_cursor_surfaces"] = getattr(
+            windows, "ignored_cursor_surfaces", []
+        )
         subprocess.run(
             ["screencapture", "-x", output / "after-cleanup-desktop.png"],
             check=True,
