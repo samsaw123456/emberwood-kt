@@ -23,7 +23,12 @@ from linux_game_smoke import fox_center, stop_owned, title_visible
 from mac_app_profile import app_pid, validate_capture_trace
 from mac_application_menu import inspect_application_menu
 from mac_audio_audit import capture_initialization_stacks
-from mac_bundle_smoke import ImmediateMacKeys, cleanup_app, physical_command_quit
+from mac_bundle_smoke import (
+    ImmediateMacKeys,
+    cleanup_app,
+    launch_command,
+    physical_command_quit,
+)
 from mac_game_focus import require_game_window
 from mac_game_window import GameWindow, NativeWindowMissing
 from mac_profile_observer import NativeStatus
@@ -39,6 +44,17 @@ ALLOWED_KEYS = {"return", "d", "a", "left"}
 
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def main_launch_command(app, data, output):
+    command = launch_command(None, app, data)
+    command[3:3] = [
+        "--stdout",
+        str(output / "app-stdout.log"),
+        "--stderr",
+        str(output / "app-stderr.log"),
+    ]
+    return command
 
 
 def owned_window(windows, pid, executable, window_id=None):
@@ -594,7 +610,7 @@ def main():
             output, executable, capture_trace=True, capture_image_interval=0.1
         )
         with tempfile.TemporaryDirectory(prefix="emberwood-main-save-") as data:
-            command = ["open", "-W", "-n", str(app), "--args", "--data-dir", data]
+            command = main_launch_command(app, Path(data), output)
             report["launcher_argv"] = command
             launcher = subprocess.Popen(command)
             deadline = time.monotonic() + 30

@@ -18,6 +18,7 @@ from mac_main_movement import (
     held_capture_callback,
     inspect_held_stream,
     inspect_released_stream,
+    main_launch_command,
     observe_recovery,
     observed_fox,
     owned_window,
@@ -58,6 +59,22 @@ class Keyboard:
 
 
 class MainMovementTests(unittest.TestCase):
+    def test_launch_retains_scoped_stdio_without_changing_app_arguments(self):
+        app = Path("/private/native app/Emberwood Kotlin.app")
+        data, output = Path("/private/save data"), Path("/private/owned evidence")
+        command = main_launch_command(app, data, output)
+        self.assertEqual(command[:3], ["open", "-W", "-n"])
+        self.assertEqual(
+            command[3:7],
+            [
+                "--stdout",
+                str(output / "app-stdout.log"),
+                "--stderr",
+                str(output / "app-stderr.log"),
+            ],
+        )
+        self.assertEqual(command[7:], [str(app), "--args", "--data-dir", str(data)])
+
     def test_stream_mode_queries_no_snapshot_until_after_early_recovery(self):
         for key, delay in (("a", 0.6), ("left", 3.5)):
             for mode in ("snapshot", "stream-only"):

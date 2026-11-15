@@ -42,19 +42,30 @@ object MacApplicationMenuProbe {
             } else {
                 val before = inspector.snapshot()
                 check(before.services != 0L) { "Fresh AWT startup supplied no Services menu; removal was not exercised" }
-                before.write(output.resolve("menu-before.tsv"))
+                observations += before.record(output, "before", before.services)
                 val expected = before.items.filter { it.submenu != before.services }
                 check(expected.size == before.items.size - 1) { "Registered Services submenu must identify exactly one native item" }
+                check(before.servicesParent == before.applicationMenu && before.servicesIndex != null && before.servicesIndex >= 0) {
+                    "Registered Services submenu is not attached to the application menu"
+                }
                 check(expected.any { it.actionName == "terminate:" }) { "The default native Quit action is absent" }
                 SwingUtilities.invokeAndWait { MacApplicationMenu.configure() }
                 val prepared = inspector.snapshot()
-                prepared.write(output.resolve("menu-prepared.tsv"))
-                check(prepared.services == 0L && prepared.items == expected) { "Preparation changed a sibling or retained Services" }
+                observations += prepared.record(output, "prepared", before.services)
+                check(
+                    prepared.servicesParent == 0L &&
+                        prepared.servicesIndex == null &&
+                        prepared.applicationMenu == before.applicationMenu &&
+                        prepared.items == expected,
+                ) { "Preparation changed a sibling or retained an attached Services menu" }
                 SwingUtilities.invokeAndWait { checkNotNull(frame).isVisible = true }
                 val shown = inspector.snapshot()
-                shown.write(output.resolve("menu-shown.tsv"))
+                observations += shown.record(output, "shown", before.services)
                 check(
-                    shown.services == 0L && shown.items == expected,
+                    shown.servicesParent == 0L &&
+                        shown.servicesIndex == null &&
+                        shown.applicationMenu == before.applicationMenu &&
+                        shown.items == expected,
                 ) { "Showing the window restored Services or changed another native item" }
                 api.onMainThread {
                     check(!MacApplicationMenu.removeServices(api)) { "Idempotent direct-main-thread configuration changed another item" }
@@ -79,7 +90,8 @@ object MacApplicationMenuProbe {
             if (error == null && observe) {
                 "{\"result\":\"OBSERVATION_COMPLETE\",\"owned_window_disposed\":true,$details}\n"
             } else if (error == null) {
-                "{\"result\":\"PASS\",\"services_absent_after_show\":true,\"sibling_identities_actions_preserved\":true," +
+                "{\"result\":\"PASS\",\"services_item_absent_after_show\":true,\"services_detached_after_show\":true," +
+                    "\"sibling_identities_actions_preserved\":true," +
                     "\"direct_main_thread_idempotence\":true,\"owned_window_disposed\":true,$details}\n"
             } else {
                 val message =
@@ -113,15 +125,7 @@ object MacApplicationMenuProbe {
         fun record(phase: String): Snapshot {
             val state = inspector.snapshot()
             if (phase == "original") originalServices = state.services
-            val filename = "menu-$phase.tsv"
-            state.write(output.resolve(filename))
-            val originalIndex = if (originalServices == 0L) -1 else state.items.indexOfFirst { it.submenu == originalServices }
-            observations +=
-                "{\"phase\":\"$phase\",\"services_pointer\":${state.services}," +
-                "\"services_parent_pointer\":${state.servicesParent},\"services_parent_index\":${state.servicesIndex}," +
-                "\"application_menu_pointer\":${state.applicationMenu}," +
-                "\"original_services_item_index\":$originalIndex," +
-                "\"items_tsv\":\"$filename\"}"
+            observations += state.record(output, phase, originalServices)
             return state
         }
         api.onMainThread {
@@ -132,7 +136,7 @@ object MacApplicationMenuProbe {
             check(original.servicesIndex >= 0) { "Services parent has no corresponding submenu item" }
             api.removeItem(MemorySegment.ofAddress(original.servicesParent), original.servicesIndex)
             record("after-removal")
-            api.clearServicesMenu(api.application())
+            inspector.clearServicesMenu()
             record("after-set-first")
             record("after-set-second")
         }
@@ -160,7 +164,22 @@ object MacApplicationMenuProbe {
         val applicationMenu: Long,
         val items: List<Item>,
     ) {
-        fun write(path: Path) {
+        fun record(
+            output: Path,
+            phase: String,
+            originalServices: Long,
+        ): String {
+            val filename = "menu-$phase.tsv"
+            write(output.resolve(filename))
+            val originalIndex = if (originalServices == 0L) -1 else items.indexOfFirst { it.submenu == originalServices }
+            return "{\"phase\":\"$phase\",\"services_pointer\":$services," +
+                "\"services_parent_pointer\":$servicesParent,\"services_parent_index\":$servicesIndex," +
+                "\"application_menu_pointer\":$applicationMenu," +
+                "\"original_services_item_index\":$originalIndex," +
+                "\"items_tsv\":\"$filename\"}"
+        }
+
+        private fun write(path: Path) {
             Files.writeString(
                 path,
                 "identity\ttitle\tsubmenu\taction\taction_name\ttarget\tkey\tmodifiers\n" +
@@ -172,7 +191,7 @@ object MacApplicationMenuProbe {
         }
     }
 
-    /** Independent read-only inspection of original native identities, selectors and shortcuts. */
+    /** Independent inspection of native identities and shortcuts; the setter is restricted to observation mode. */
     private class Inspector(
         private val api: CocoaMenuApi,
     ) {
@@ -184,6 +203,16 @@ object MacApplicationMenuProbe {
         private val integer = linker.downcallHandle(message, FunctionDescriptor.of(JAVA_LONG, ADDRESS, ADDRESS))
         private val register = linker.downcallHandle(objc.findOrThrow("sel_registerName"), FunctionDescriptor.of(ADDRESS, ADDRESS))
         private val selectorName = linker.downcallHandle(objc.findOrThrow("sel_getName"), FunctionDescriptor.of(ADDRESS, ADDRESS))
+        private val set = linker.downcallHandle(message, FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS))
+
+        fun clearServicesMenu() {
+            // This mutation belongs only to the explicit registration-semantics diagnostic.
+            api.onMainThread { clearRegistration() }
+        }
+
+        private fun clearRegistration() {
+            set.invokeExact(api.application(), selector("setServicesMenu:"), MemorySegment.NULL)
+        }
 
         fun snapshot(): Snapshot {
             var result: Snapshot? = null

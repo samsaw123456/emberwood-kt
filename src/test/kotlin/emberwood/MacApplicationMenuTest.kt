@@ -16,13 +16,17 @@ class MacApplicationMenuTest {
     @Test
     fun removesOnlyTheRegisteredSubmenuAndPreservesOtherItems() {
         val api = MenuFixture()
+        val registered = api.registered
         val expected = api.items.filter { it.submenu != api.registered }
         assertTrue(MacApplicationMenu.removeServices(api))
         assertEquals(expected, api.items, "About, Hide, Quit and an identically named unrelated submenu must survive")
-        assertEquals(MemorySegment.NULL, api.registered)
-        assertEquals(listOf("remove:2", "clear"), api.changes)
+        expected.zip(api.items).forEach { (before, after) -> assertSame(before, after) }
+        assertEquals(registered, api.registered, "Native registration may retain the detached submenu")
+        assertEquals(MemorySegment.NULL, api.parent)
+        assertEquals(listOf("remove:2"), api.changes)
         assertFalse(MacApplicationMenu.removeServices(api), "Repeated configuration must not remove a neighboring item")
         assertEquals(expected, api.items)
+        assertEquals(listOf("remove:2"), api.changes)
     }
 
     @Test
@@ -32,11 +36,17 @@ class MacApplicationMenuTest {
         assertFalse(MacApplicationMenu.removeServices(absent))
         assertEquals(before, absent.items)
         assertTrue(absent.changes.isEmpty())
-        val detached = MenuFixture().also { it.parent = MemorySegment.NULL }
+        val detached =
+            MenuFixture().also {
+                it.items.removeAll { item -> item.submenu == it.registered }
+                it.parent = MemorySegment.NULL
+            }
         val detachedBefore = detached.items.toList()
-        assertTrue(MacApplicationMenu.removeServices(detached))
+        val registered = detached.registered
+        assertFalse(MacApplicationMenu.removeServices(detached))
         assertEquals(detachedBefore, detached.items)
-        assertEquals(listOf("clear"), detached.changes)
+        assertEquals(registered, detached.registered)
+        assertTrue(detached.changes.isEmpty())
     }
 
     @Test
@@ -53,10 +63,10 @@ class MacApplicationMenuTest {
     fun ineffectiveNativeMutationCannotReportSuccess() {
         val retainedItem = MenuFixture().also { it.ignoreRemove = true }
         assertFailsWith<IllegalStateException> { MacApplicationMenu.removeServices(retainedItem) }
-        assertEquals(listOf("remove:2"), retainedItem.changes, "Do not clear registration if the item remains")
-        val retainedRegistration = MenuFixture().also { it.ignoreClear = true }
-        assertFailsWith<IllegalStateException> { MacApplicationMenu.removeServices(retainedRegistration) }
-        assertEquals(listOf("remove:2", "clear"), retainedRegistration.changes)
+        assertEquals(listOf("remove:2"), retainedItem.changes)
+        val retainedParent = MenuFixture().also { it.ignoreDetach = true }
+        assertFailsWith<IllegalStateException> { MacApplicationMenu.removeServices(retainedParent) }
+        assertEquals(listOf("remove:2"), retainedParent.changes)
     }
 
     @Test
@@ -125,10 +135,11 @@ class MacApplicationMenuTest {
     private class MenuFixture : MacMenuApi {
         var app = MemorySegment.ofAddress(1)
         var registered = MemorySegment.ofAddress(2)
-        var parent = MemorySegment.ofAddress(3)
+        private val container = MemorySegment.ofAddress(3)
+        var parent = container
         var missingIndex = false
         var ignoreRemove = false
-        var ignoreClear = false
+        var ignoreDetach = false
         var onMain = false
         val changes = mutableListOf<String>()
         val items =
@@ -160,7 +171,7 @@ class MacApplicationMenuTest {
             menu: MemorySegment,
             submenu: MemorySegment,
         ): Long {
-            check(onMain && menu == parent)
+            check(onMain && menu == container)
             return if (missingIndex) -1 else items.indexOfFirst { it.submenu == submenu }.toLong()
         }
 
@@ -168,15 +179,12 @@ class MacApplicationMenuTest {
             menu: MemorySegment,
             index: Long,
         ) {
-            check(onMain && menu == parent)
+            check(onMain && menu == container)
             changes += "remove:$index"
-            if (!ignoreRemove) items.removeAt(index.toInt())
-        }
-
-        override fun clearServicesMenu(application: MemorySegment) {
-            check(onMain && application == app)
-            changes += "clear"
-            if (!ignoreClear) registered = MemorySegment.NULL
+            if (!ignoreRemove) {
+                items.removeAt(index.toInt())
+                if (!ignoreDetach) parent = MemorySegment.NULL
+            }
         }
     }
 }

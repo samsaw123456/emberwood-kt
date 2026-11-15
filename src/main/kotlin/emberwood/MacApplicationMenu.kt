@@ -31,12 +31,14 @@ internal object MacApplicationMenu {
                 if (parent != MemorySegment.NULL) {
                     val index = api.indexOfSubmenu(parent, services)
                     check(index >= 0) { "macOS Services menu is missing from its parent" }
+                    // NSApplication's strong servicesMenu property keeps the submenu alive after item removal.
                     api.removeItem(parent, index)
                     check(api.indexOfSubmenu(parent, services) == -1L) { "macOS Services menu was not removed" }
+                    check(api.supermenu(services) == MemorySegment.NULL) { "macOS Services menu is still attached" }
+                    removed = true
                 }
-                api.clearServicesMenu(application)
-                check(api.servicesMenu(application) == MemorySegment.NULL) { "macOS Services menu is still registered" }
-                removed = true
+                // NSApplication retains its registered submenu. Detaching that exact item prevents
+                // irrelevant Services shortcut traversal without changing registration or sibling actions.
             }
         }
         return removed
@@ -61,8 +63,6 @@ internal interface MacMenuApi {
         menu: MemorySegment,
         index: Long,
     )
-
-    fun clearServicesMenu(application: MemorySegment)
 }
 
 /** A synchronous callback cannot outlive its arena or unwind an exception through C. */
@@ -117,7 +117,6 @@ internal class CocoaMenuApi : MacMenuApi {
     private val pointer = linker.downcallHandle(message, FunctionDescriptor.of(ADDRESS, ADDRESS, ADDRESS))
     private val index = linker.downcallHandle(message, FunctionDescriptor.of(JAVA_LONG, ADDRESS, ADDRESS, ADDRESS))
     private val remove = linker.downcallHandle(message, FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_LONG))
-    private val set = linker.downcallHandle(message, FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS))
     private val isMain = linker.downcallHandle(system.findOrThrow("pthread_main_np"), FunctionDescriptor.of(JAVA_INT))
     private val dispatch =
         linker.downcallHandle(system.findOrThrow("dispatch_sync_f"), FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, ADDRESS))
@@ -131,7 +130,6 @@ internal class CocoaMenuApi : MacMenuApi {
     private val parent = selector("supermenu")
     private val indexOf = selector("indexOfItemWithSubmenu:")
     private val removeAt = selector("removeItemAtIndex:")
-    private val setServices = selector("setServicesMenu:")
 
     override fun onMainThread(action: () -> Unit) {
         if (isMain.invokeExact() as Int != 0) {
@@ -164,10 +162,6 @@ internal class CocoaMenuApi : MacMenuApi {
         index: Long,
     ) {
         remove.invokeExact(menu, removeAt, index)
-    }
-
-    override fun clearServicesMenu(application: MemorySegment) {
-        set.invokeExact(application, setServices, MemorySegment.NULL)
     }
 
     private fun classNamed(name: String): MemorySegment =
